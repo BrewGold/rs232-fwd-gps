@@ -22,6 +22,8 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("[boot] RS232-FWD-GPS phase1");
+  Serial.print("[boot] active link: ");
+  Serial.println(gnss_uart::topology());
 
   gnss_uart::begin();
   ntrip_client::begin();
