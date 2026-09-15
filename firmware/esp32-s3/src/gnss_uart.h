@@ -8,5 +8,6 @@ namespace gnss_uart {
 void begin();
 bool poll(model::GnssFix& out_fix);
 const char* latestGga();
+const char* topology();
 
 } // namespace gnss_uart

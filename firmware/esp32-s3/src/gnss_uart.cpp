@@ -5,6 +5,7 @@ namespace {
 HardwareSerial gnssSerial(config::GNSS_UART_NUM);
 String lineBuf;
 String latestGgaLine;
+constexpr char kActiveTopology[] = "UM980 on TX3/RX3, USB1 debug/logs";
 
 bool parseLatLonNmea(const String& raw, const String& hemi, double& out_deg) {
   if (raw.length() < 3) return false;
@@ -124,6 +125,10 @@ bool poll(model::GnssFix& out_fix) {
 
 const char* latestGga() {
   return latestGgaLine.c_str();
+}
+
+const char* topology() {
+  return kActiveTopology;
 }
 
 } // namespace gnss_uart

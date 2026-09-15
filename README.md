@@ -19,16 +19,17 @@ No se implementará inicialmente corrección por rumbo basada en trayectoria.
 - GNSS: ArduSimple simpleRTK3B Budget (UM980)
 - MCU: ESP32-S3 formato UNO
 - IMU: Adafruit BNO085/BNO086 (experimental)
-- Conversión RS232: MAX3232
+- Integración RS232/Dynatest dependiente del montaje físico final
 
 Flujo principal:
 
-1. ESP32-S3 recibe GGA/RMC del UM980 por UART1 (115200).
-2. ESP32-S3 inyecta RTCM (NTRIP) al UM980.
-3. ESP32-S3 detecta estado MOVING/STOPPED.
-4. En STOPPED promedia coordenadas (15 s a 10 Hz).
-5. ESP32-S3 emite GGA a Dynatest por UART2 + MAX3232 (38400, 10 Hz).
-6. LEDs externos muestran estado POWER/GNSS.
+1. ESP32-S3 usa un único enlace serial activo con el UM980 sobre TX3/RX3 (UART1, 115200).
+2. USB1 queda reservado para programación y logs.
+3. ESP32-S3 recibe GGA/RMC del UM980 e inyecta RTCM (NTRIP) por ese mismo enlace.
+4. ESP32-S3 detecta estado MOVING/STOPPED.
+5. En STOPPED promedia coordenadas (15 s a 10 Hz).
+6. Esta revisión no inicializa una UART adicional para salida GGA; el único enlace serial activo implementado por firmware es el de UM980 sobre TX3/RX3.
+7. LEDs externos muestran estado POWER/GNSS.
 
 ## Prioridad de solución GNSS
 
@@ -41,7 +42,7 @@ Flujo principal:
 
 - MOVING: lectura GNSS continua y actualización de historial.
 - STOPPED: promedio de coordenadas durante 15 s.
-- OUTPUT: mantenimiento de salida GGA a 10 Hz al Dynatest.
+- OUTPUT: mantenimiento de la mejor coordenada disponible sin asumir una UART dedicada adicional.
 
 ## Estructura del repositorio
 
@@ -51,7 +52,7 @@ Flujo principal:
 
 ## Roadmap
 
-- Fase 1: Validar enlace RTK3B → ESP32-S3 → Dynatest (38400, GGA 10 Hz).
+- Fase 1: Validar enlace serial activo RTK3B ↔ ESP32-S3 y la topología única reportada por USB1.
 - Fase 2: Implementar NTRIP/RTCM y RTK FIX.
 - Fase 3: Implementar promedio de 15 s en parada.
 - Fase 4: Integrar BNO085, LEDs y arnés RJ45 para evaluación futura.

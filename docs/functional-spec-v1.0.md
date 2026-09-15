@@ -50,30 +50,24 @@ Estado actual:
 - Experimental
 - No se utilizará inicialmente para corregir coordenadas
 
-### Comunicación Dynatest
+### Integración serial externa
 
-- Conversión RS232 con MAX3232
+- El flujo actual no expone una UART de salida independiente en firmware
 
 Conexión:
 
-- ESP32-S3 UART2
-- MAX3232
-- Dynatest
+- UM980 COM3 ↔ ESP32-S3 UART1 (TX3/RX3)
+- USB1 reservado para programación y logs
 
 ## Comunicaciones
 
 ### UART RTK3B
 
-- Puerto: ESP32-S3 UART1
+- Puerto: ESP32-S3 UART1 sobre TX3/RX3
 - Velocidad: 115200 baud
 - Mensajes recibidos: GGA, RMC
 - Mensajes transmitidos: RTCM
-
-### UART Dynatest
-
-- Puerto: ESP32-S3 UART2
-- Velocidad: 38400 baud
-- Salida: GGA a 10 Hz
+- Flujo GGA: esta revisión no inicializa una UART adicional de salida; la referencia activa permanece en el enlace UM980
 
 ### I²C IMU
 
@@ -169,19 +163,18 @@ Asignación:
 
 ### Estado OUTPUT
 
-- Mantener salida GGA a 10 Hz al Dynatest
+- Mantener la mejor coordenada disponible sin UART dedicada adicional
 
 ## Fases del proyecto
 
 ### Fase 1
 
-RTK3B → ESP32-S3 → Dynatest
+RTK3B ↔ ESP32-S3 sobre enlace serial único
 
 Validar:
 
-- 38400 baud
-- GGA 10 Hz
-- Compatibilidad Dynatest
+- 115200 baud en UART1 / TX3-RX3
+- Topología de arranque reportada por USB1
 
 ### Fase 2
 

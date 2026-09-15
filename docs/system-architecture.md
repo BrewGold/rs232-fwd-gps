@@ -2,13 +2,13 @@
 
 ## 1. Resumen
 
-El sistema desacopla adquisición GNSS, lógica de estado y salida serial hacia Dynatest FWD.
+El sistema desacopla adquisición GNSS, lógica de estado y la topología serial única del UM980.
 
 Bloques principales:
 
 1. Receptor GNSS (UM980 / simpleRTK3B Budget)
 2. Controlador ESP32-S3
-3. Interfaz RS232 (MAX3232)
+3. Enlace serial principal UM980 ↔ ESP32-S3
 4. IMU BNO085/BNO086 (experimental)
 5. LEDs externos de estado
 
@@ -20,33 +20,26 @@ NTRIP caster (Internet)
         ▼
 ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
         │                                    │
-        │                                    └─ NMEA (GGA/RMC) ──► ESP32-S3 UART1
+        │                                    └─ NMEA (GGA/RMC) ──► ESP32-S3 UART1 (TX3/RX3)
         │
         ├─ I2C ──► BNO085 (experimental)
         │
         ├─ GPIO ──► LED_POWER / LED_GNSS
-        │
-        └─ UART2 (38400) ─► MAX3232 ─► Dynatest FWD (GGA 10 Hz)
 ```
 
 ## 3. Interfaz de datos
 
 ### 3.1 GNSS ↔ ESP32-S3
 
-- Enlace: UART1
+- Enlace: UART1 sobre TX3/RX3
 - Baudrate: 115200
 - Entrada a ESP32-S3:
   - NMEA GGA
   - NMEA RMC
 - Salida desde ESP32-S3:
   - RTCM (cuando hay NTRIP)
-
-### 3.2 ESP32-S3 ↔ Dynatest
-
-- Enlace: UART2 + MAX3232
-- Baudrate: 38400
-- Trama: NMEA GGA
-- Tasa: 10 Hz
+- Flujo GGA:
+  - Esta revisión no inicializa una UART adicional para reemitir GGA
 
 ### 3.3 ESP32-S3 ↔ BNO085
 
@@ -60,7 +53,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 - Se ingiere GNSS continuo.
 - Se actualiza historial para detección de parada.
-- Se mantiene salida GGA 10 Hz.
+- No se asume una UART independiente para salida GGA en esta revisión.
 
 ### STOPPED
 
@@ -131,12 +124,11 @@ Notas de implementación:
 
 Objetivo:
 
-- Validar enlace serial con Dynatest.
+- Validar enlace serial activo UM980 ↔ ESP32-S3 según el montaje actual.
 
 Aceptación:
 
-- GGA estable a 10 Hz, 38400 baud.
-- Dynatest recibe y parsea sin errores.
+- La topología de arranque reporta UM980 en TX3/RX3, USB1 para debug y ausencia de UART dedicada para GGA.
 
 ### Fase 2
 
