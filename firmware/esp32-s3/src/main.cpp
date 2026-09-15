@@ -26,9 +26,7 @@ void setup() {
   gnss_uart::begin();
   Serial.print("[boot] active link: ");
   Serial.println(gnss_uart::topology());
-  Serial.println(config::GNSS_LINK_GGA_PASSTHROUGH
-                     ? "[boot] GGA passthrough: enabled on active GNSS link"
-                     : "[boot] GGA passthrough: disabled on single UM980 link");
+  Serial.println("[boot] GGA path: shared GNSS link, no dedicated UART");
   ntrip_client::begin();
   gga_output::begin();
   led_status::begin();

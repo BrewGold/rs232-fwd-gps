@@ -1,6 +1,5 @@
 #include "gnss_uart.h"
 #include "config.h"
-#include <cstring>
 
 namespace {
 HardwareSerial gnssSerial(config::GNSS_UART_NUM);
@@ -126,18 +125,6 @@ bool poll(model::GnssFix& out_fix) {
 
 const char* latestGga() {
   return latestGgaLine.c_str();
-}
-
-void writeLine(const char* line) {
-  if (!line || line[0] == '\0') return;
-
-  gnssSerial.print(line);
-
-  const size_t len = std::strlen(line);
-  const bool has_crlf = len >= 2 && line[len - 2] == '\r' && line[len - 1] == '\n';
-  if (!has_crlf) {
-    gnssSerial.print("\r\n");
-  }
 }
 
 const char* topology() {

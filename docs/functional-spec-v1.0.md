@@ -67,8 +67,7 @@ Conexión:
 - Velocidad: 115200 baud
 - Mensajes recibidos: GGA, RMC
 - Mensajes transmitidos: RTCM
-- Flujo GGA: reutiliza la última trama válida del enlace activo sin abrir una UART adicional en esta versión
-- Passthrough serial GGA: deshabilitado por defecto para evitar eco sobre el enlace único con UM980
+- Flujo GGA: conserva la última trama válida del enlace activo sin abrir una UART adicional en esta versión
 
 ### I²C IMU
 

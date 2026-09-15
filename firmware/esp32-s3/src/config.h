@@ -8,7 +8,6 @@ namespace config {
 static constexpr int GNSS_UART_NUM = 1;
 
 static constexpr uint32_t GNSS_BAUD = 115200;
-static constexpr bool GNSS_LINK_GGA_PASSTHROUGH = false;
 
 // Enlace serial único activo: UM980 COM3 <-> ESP32-S3 TX3/RX3
 static constexpr int PIN_GNSS_RX = 18;
