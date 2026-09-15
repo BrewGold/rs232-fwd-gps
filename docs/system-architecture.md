@@ -40,6 +40,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
   - RTCM (cuando hay NTRIP)
 - Flujo GGA:
   - El firmware reutiliza la GGA más reciente sin abrir una UART adicional en esta versión
+  - El passthrough serial queda deshabilitado por defecto para evitar eco hacia el UM980
 
 ### 3.3 ESP32-S3 ↔ BNO085
 
@@ -129,6 +130,7 @@ Objetivo:
 Aceptación:
 
 - GGA disponible desde el enlace activo sin inicializar una UART independiente.
+- Passthrough GGA deshabilitado por defecto en la topología de enlace único.
 - La topología de arranque reporta UM980 en TX3/RX3 y USB1 para debug.
 
 ### Fase 2

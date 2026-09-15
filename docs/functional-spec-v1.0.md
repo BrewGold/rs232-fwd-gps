@@ -68,6 +68,7 @@ Conexión:
 - Mensajes recibidos: GGA, RMC
 - Mensajes transmitidos: RTCM
 - Flujo GGA: reutiliza la última trama válida del enlace activo sin abrir una UART adicional en esta versión
+- Passthrough serial GGA: deshabilitado por defecto para evitar eco sobre el enlace único con UM980
 
 ### I²C IMU
 

@@ -22,10 +22,13 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("[boot] RS232-FWD-GPS phase1");
-  Serial.print("[boot] active link: ");
-  Serial.println(gnss_uart::topology());
 
   gnss_uart::begin();
+  Serial.print("[boot] active link: ");
+  Serial.println(gnss_uart::topology());
+  Serial.println(config::GNSS_LINK_GGA_PASSTHROUGH
+                     ? "[boot] GGA passthrough: enabled on active GNSS link"
+                     : "[boot] GGA passthrough: disabled on single UM980 link");
   ntrip_client::begin();
   gga_output::begin();
   led_status::begin();
