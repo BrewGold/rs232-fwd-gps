@@ -19,7 +19,7 @@ No se implementará inicialmente corrección por rumbo basada en trayectoria.
 - GNSS: ArduSimple simpleRTK3B Budget (UM980)
 - MCU: ESP32-S3 formato UNO
 - IMU: Adafruit BNO085/BNO086 (experimental)
-- Salida RS232 hacia Dynatest usando el enlace serial activo del montaje
+- Integración RS232/Dynatest dependiente del montaje físico final
 
 Flujo principal:
 
@@ -28,7 +28,7 @@ Flujo principal:
 3. ESP32-S3 recibe GGA/RMC del UM980 e inyecta RTCM (NTRIP) por ese mismo enlace.
 4. ESP32-S3 detecta estado MOVING/STOPPED.
 5. En STOPPED promedia coordenadas (15 s a 10 Hz).
-6. Esta revisión no inicializa una UART adicional para salida GGA; el único enlace serial activo es el de UM980 sobre TX3/RX3.
+6. Esta revisión no inicializa una UART adicional para salida GGA; el único enlace serial activo implementado por firmware es el de UM980 sobre TX3/RX3.
 7. LEDs externos muestran estado POWER/GNSS.
 
 ## Prioridad de solución GNSS

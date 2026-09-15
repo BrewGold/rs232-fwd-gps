@@ -50,9 +50,9 @@ Estado actual:
 - Experimental
 - No se utilizará inicialmente para corregir coordenadas
 
-### Comunicación Dynatest
+### Integración serial externa
 
-- El flujo actual reutiliza el mismo enlace serial principal del UM980 según el montaje reportado
+- El flujo actual no expone una UART de salida independiente en firmware
 
 Conexión:
 
