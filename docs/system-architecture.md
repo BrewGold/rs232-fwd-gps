@@ -2,7 +2,7 @@
 
 ## 1. Resumen
 
-El sistema desacopla adquisición GNSS, lógica de estado y reenvío serial sobre el enlace activo del UM980.
+El sistema desacopla adquisición GNSS, lógica de estado y manejo del flujo GGA sobre el enlace activo del UM980.
 
 Bloques principales:
 
@@ -20,7 +20,7 @@ NTRIP caster (Internet)
         ▼
 ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
         │                                    │
-        │                                    └─ NMEA (GGA/RMC) / GGA 10 Hz ──► ESP32-S3 UART1 (TX3/RX3)
+        │                                    └─ NMEA (GGA/RMC) ──► ESP32-S3 UART1 (TX3/RX3)
         │
         ├─ I2C ──► BNO085 (experimental)
         │
@@ -38,8 +38,8 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
   - NMEA RMC
 - Salida desde ESP32-S3:
   - RTCM (cuando hay NTRIP)
-- Reenvío adicional:
-  - NMEA GGA a 10 Hz por el mismo enlace serial activo según el montaje actual
+- Flujo GGA:
+  - El firmware reutiliza la GGA más reciente sin abrir una UART adicional en esta versión
 
 ### 3.3 ESP32-S3 ↔ BNO085
 
@@ -53,7 +53,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 - Se ingiere GNSS continuo.
 - Se actualiza historial para detección de parada.
-- Se mantiene reenvío GGA 10 Hz.
+- Se mantiene el flujo GGA sin asumir una UART independiente.
 
 ### STOPPED
 
@@ -128,7 +128,7 @@ Objetivo:
 
 Aceptación:
 
-- GGA estable a 10 Hz sobre el enlace activo.
+- GGA disponible desde el enlace activo sin inicializar una UART independiente.
 - La topología de arranque reporta UM980 en TX3/RX3 y USB1 para debug.
 
 ### Fase 2

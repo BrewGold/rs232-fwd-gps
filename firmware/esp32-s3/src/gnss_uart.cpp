@@ -127,15 +127,6 @@ const char* latestGga() {
   return latestGgaLine.c_str();
 }
 
-void writeLine(const char* line) {
-  if (!line || line[0] == '\0') return;
-
-  gnssSerial.print(line);
-  if (!String(line).endsWith("\r\n")) {
-    gnssSerial.print("\r\n");
-  }
-}
-
 const char* topology() {
   return kActiveTopology;
 }

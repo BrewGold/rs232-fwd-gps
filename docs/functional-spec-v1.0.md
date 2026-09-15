@@ -66,7 +66,8 @@ Conexión:
 - Puerto: ESP32-S3 UART1 sobre TX3/RX3
 - Velocidad: 115200 baud
 - Mensajes recibidos: GGA, RMC
-- Mensajes transmitidos: RTCM y GGA a 10 Hz por el enlace activo según el montaje actual
+- Mensajes transmitidos: RTCM
+- Flujo GGA: reutiliza la última trama válida del enlace activo sin abrir una UART adicional en esta versión
 
 ### I²C IMU
 
@@ -162,7 +163,7 @@ Asignación:
 
 ### Estado OUTPUT
 
-- Mantener salida GGA a 10 Hz sobre el enlace serial activo
+- Mantener el flujo GGA usando la última trama válida sin UART dedicada adicional
 
 ## Fases del proyecto
 
@@ -173,7 +174,7 @@ RTK3B ↔ ESP32-S3 sobre enlace serial único
 Validar:
 
 - 115200 baud en UART1 / TX3-RX3
-- GGA 10 Hz
+- GGA disponible desde el enlace serial activo
 - Topología de arranque reportada por USB1
 
 ### Fase 2
