@@ -28,7 +28,7 @@ Flujo principal:
 3. ESP32-S3 recibe GGA/RMC del UM980 e inyecta RTCM (NTRIP) por ese mismo enlace.
 4. ESP32-S3 detecta estado MOVING/STOPPED.
 5. En STOPPED promedia coordenadas (15 s a 10 Hz).
-6. El firmware conserva el flujo GGA tomando la última trama válida del enlace GNSS activo, sin inicializar una UART adicional independiente.
+6. Esta revisión no inicializa una UART adicional para salida GGA; el único enlace serial activo es el de UM980 sobre TX3/RX3.
 7. LEDs externos muestran estado POWER/GNSS.
 
 ## Prioridad de solución GNSS
@@ -42,7 +42,7 @@ Flujo principal:
 
 - MOVING: lectura GNSS continua y actualización de historial.
 - STOPPED: promedio de coordenadas durante 15 s.
-- OUTPUT: mantenimiento del flujo GGA con la topología serial única activa y sin UART dedicada adicional.
+- OUTPUT: mantenimiento de la mejor coordenada disponible sin asumir una UART dedicada adicional.
 
 ## Estructura del repositorio
 

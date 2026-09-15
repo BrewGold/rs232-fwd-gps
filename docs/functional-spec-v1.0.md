@@ -67,7 +67,7 @@ Conexión:
 - Velocidad: 115200 baud
 - Mensajes recibidos: GGA, RMC
 - Mensajes transmitidos: RTCM
-- Flujo GGA: conserva la última trama válida del enlace activo sin abrir una UART adicional en esta versión
+- Flujo GGA: esta revisión no inicializa una UART adicional de salida; la referencia activa permanece en el enlace UM980
 
 ### I²C IMU
 
@@ -163,7 +163,7 @@ Asignación:
 
 ### Estado OUTPUT
 
-- Mantener el flujo GGA usando la última trama válida sin UART dedicada adicional
+- Mantener la mejor coordenada disponible sin UART dedicada adicional
 
 ## Fases del proyecto
 
@@ -174,7 +174,6 @@ RTK3B ↔ ESP32-S3 sobre enlace serial único
 Validar:
 
 - 115200 baud en UART1 / TX3-RX3
-- GGA disponible desde el enlace serial activo
 - Topología de arranque reportada por USB1
 
 ### Fase 2

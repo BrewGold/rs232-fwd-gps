@@ -24,6 +24,5 @@ pio device monitor -b 115200
 - `ntrip_client`: gestión de caster y RTCM
 - `stop_detector`: detección de parada
 - `position_averager`: promedio temporal 15 s
-- `gga_output`: mantiene la última GGA preparada desde el enlace GNSS activo sin abrir una UART independiente
 - `led_status`: patrones LED_POWER y LED_GNSS
 - `imu_service`: integración BNO085 (experimental)

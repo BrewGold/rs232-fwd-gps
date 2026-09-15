@@ -6,7 +6,6 @@
 #include "ntrip_client.h"
 #include "stop_detector.h"
 #include "position_averager.h"
-#include "gga_output.h"
 #include "led_status.h"
 #include "imu_service.h"
 
@@ -14,7 +13,6 @@ namespace {
 model::VehicleState state = model::VehicleState::Moving;
 model::GnssFix live_fix;
 model::GnssFix output_fix;
-uint32_t last_output_ms = 0;
 uint32_t last_log_ms = 0;
 }
 
@@ -26,9 +24,8 @@ void setup() {
   gnss_uart::begin();
   Serial.print("[boot] active link: ");
   Serial.println(gnss_uart::topology());
-  Serial.println("[boot] GGA path: shared GNSS link, no dedicated UART");
+  Serial.println("[boot] GGA path: no dedicated UART configured in this hardware revision");
   ntrip_client::begin();
-  gga_output::begin();
   led_status::begin();
   imu_service::begin();
 
@@ -77,14 +74,6 @@ void loop() {
           output_fix = live_fix;
         }
         break;
-    }
-  }
-
-  const uint32_t output_period_ms = 1000 / config::OUTPUT_RATE_HZ;
-  if ((now_ms - last_output_ms) >= output_period_ms) {
-    last_output_ms = now_ms;
-    if (output_fix.valid) {
-      gga_output::sendAt10Hz(output_fix);
     }
   }
 
