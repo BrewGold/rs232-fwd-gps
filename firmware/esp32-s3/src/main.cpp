@@ -15,10 +15,13 @@ model::VehicleState state = model::VehicleState::Moving;
 model::GnssFix live_fix;
 model::GnssFix output_fix;
 uint32_t last_output_ms = 0;
+uint32_t last_log_ms = 0;
 }
 
 void setup() {
   Serial.begin(115200);
+  delay(300);
+  Serial.println("[boot] RS232-FWD-GPS phase1");
 
   gnss_uart::begin();
   ntrip_client::begin();
@@ -80,5 +83,17 @@ void loop() {
     if (output_fix.valid) {
       gga_output::sendAt10Hz(output_fix);
     }
+  }
+
+  if ((now_ms - last_log_ms) >= 1000) {
+    last_log_ms = now_ms;
+    Serial.print("[status] valid=");
+    Serial.print(output_fix.valid ? "1" : "0");
+    Serial.print(" lat=");
+    Serial.print(output_fix.lat_deg, 7);
+    Serial.print(" lon=");
+    Serial.print(output_fix.lon_deg, 7);
+    Serial.print(" spd_kmh=");
+    Serial.println(live_fix.speed_kmh, 3);
   }
 }

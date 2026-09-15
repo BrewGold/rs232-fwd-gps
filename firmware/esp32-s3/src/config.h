@@ -11,6 +11,12 @@ static constexpr int DYNATEST_UART_NUM = 2;
 static constexpr uint32_t GNSS_BAUD = 115200;
 static constexpr uint32_t DYNATEST_BAUD = 38400;
 
+// ESP32-S3 UNO-style pin placeholders (ajustar al cableado real)
+static constexpr int PIN_GNSS_RX = 18;
+static constexpr int PIN_GNSS_TX = 17;
+static constexpr int PIN_DYNATEST_RX = 16;
+static constexpr int PIN_DYNATEST_TX = 15;
+
 // Estado de parada
 static constexpr float STOP_SPEED_KMH_THRESHOLD = 0.2f;
 static constexpr float STOP_DISTANCE_M_THRESHOLD = 0.10f;
