@@ -221,7 +221,9 @@ bool parseUIntStrict(const char* s, uint32_t& out) {
   uint32_t value = 0;
   for (size_t i = 0; s[i] != '\0'; ++i) {
     if (s[i] < '0' || s[i] > '9') return false;
-    value = value * 10u + static_cast<uint32_t>(s[i] - '0');
+    const uint32_t digit = static_cast<uint32_t>(s[i] - '0');
+    if (value > (0xFFFFFFFFu - digit) / 10u) return false;
+    value = value * 10u + digit;
   }
   out = value;
   return true;
@@ -361,11 +363,16 @@ bool parseUtcToCentis(const char* utc, uint32_t& outCentis) {
   if (len > 6 && utc[6] == '.') {
     uint32_t frac = 0;
     uint32_t mult = 10;
-    for (size_t i = 7; utc[i] != '\0' && mult > 0; ++i) {
+    uint8_t fracDigits = 0;
+    for (size_t i = 7; utc[i] != '\0'; ++i) {
       if (utc[i] < '0' || utc[i] > '9') return false;
-      frac += static_cast<uint32_t>(utc[i] - '0') * mult;
-      mult /= 10;
+      if (fracDigits < 2) {
+        frac += static_cast<uint32_t>(utc[i] - '0') * mult;
+        mult /= 10;
+      }
+      fracDigits++;
     }
+    if (fracDigits == 0) return false;
     centis += frac;
   }
 
@@ -680,8 +687,16 @@ bool parseVTG(const char* line, bool& speedValid, double& speedMs, bool& cogVali
     speedValid = true;
   }
 
+  const char* trueDesignator = (fields[2] && fields[2][0] != '\0') ? fields[2] : nullptr;
+  const char* trueCourseField = fields[1];
+  if (!(trueDesignator && trueDesignator[0] == 'T' && trueDesignator[1] == '\0') && n > 3) {
+    trueDesignator = fields[3];
+    trueCourseField = fields[2];
+  }
+
   double cog = 0.0;
-  if (fields[2] && fields[2][0] == 'T' && fields[2][1] == '\0' && parseDoubleStrict(fields[1], cog)) {
+  if (trueDesignator && trueDesignator[0] == 'T' && trueDesignator[1] == '\0' &&
+      parseDoubleStrict(trueCourseField, cog)) {
     cogDeg = wrap360(cog);
     cogValid = true;
   }
