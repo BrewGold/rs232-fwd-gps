@@ -63,11 +63,13 @@ static const double STOP_SPEED_MS_EXIT = 0.30;   // sale de detenido (histéresi
 static const uint32_t STOP_CONFIRM_MS = 2000;    // confirmar 2s
 static const uint32_t AVG_WINDOW_MS = 15000;     // promedio 15s
 static const uint32_t OUT_PERIOD_MS = 100;       // 10Hz
+static const uint32_t GGA_FRESH_MAX_MS = 2000;
 
 // --- Fallback heading por COG ---
 static const double COG_HEADING_MIN_SPEED_MS = 0.80;
 static const uint32_t COG_MAX_AGE_MS = 2000;
 static const uint32_t HEADING_FALLBACK_MAX_AGE_MS = 5000;
+static const uint32_t SPEED_FRESH_MAX_MS = 2000;
 
 // --- Robustez NMEA ---
 static const size_t NMEA_LINE_MAX = 224;
@@ -93,6 +95,7 @@ int gnssFixQ = 0;
 uint8_t gnssSats = 0;
 double gnssSpeedMS = NAN;
 bool gnssSpeedValid = false;
+uint32_t gnssSpeedMsTimestamp = 0;
 
 char gnssUtcRaw[16] = {0};
 uint32_t gnssUtcCentis = 0;
@@ -119,6 +122,7 @@ uint32_t ggaCount = 0;
 uint32_t outCount = 0;
 uint32_t lastOutMs = 0;
 uint32_t malformedNmeaCount = 0;
+uint32_t lastGgaMs = 0;
 
 // Estado detenido/movimiento
 bool isStopped = false;
@@ -846,7 +850,13 @@ bool computeUtcForOutput(uint32_t nowMs, char* utcOut, size_t utcOutSize) {
 }
 
 void updateStopState(uint32_t nowMs) {
-  if (!gnssSpeedValid) return;
+  const bool speedFresh = gnssSpeedValid && ((nowMs - gnssSpeedMsTimestamp) <= SPEED_FRESH_MAX_MS);
+  if (!speedFresh) {
+    stopCandidateSince = 0;
+    moveCandidateSince = 0;
+    isStopped = false;
+    return;
+  }
 
   if (!isStopped) {
     if (gnssSpeedMS <= STOP_SPEED_MS_ENTER) {
@@ -877,6 +887,7 @@ void sendAt10Hz(uint32_t nowMs) {
   lastOutMs = nowMs;
 
   if (!gnssFix) return;
+  if (nowMs - lastGgaMs > GGA_FRESH_MAX_MS) return;
 
   double outLat = NAN;
   double outLon = NAN;
@@ -977,6 +988,7 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
     if (parsedSpeedValid) {
       gnssSpeedMS = parsedSpeedMs;
       gnssSpeedValid = true;
+      gnssSpeedMsTimestamp = nowMs;
     }
 
     if (parsedCogValid) {
@@ -993,6 +1005,7 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
 
   ggaCount++;
   autoTest.ggaIn++;
+  lastGgaMs = nowMs;
 
   gnssFixQ = gga.fixQ;
   gnssFix = (gga.fixQ > 0);

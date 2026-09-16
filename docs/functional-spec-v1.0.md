@@ -1,5 +1,8 @@
 # Especificación funcional v1.0
 
+> Revisión efectiva de contenido: **v1.1 (2026-09-16)**.  
+> Se mantiene el nombre de archivo `v1.0` por compatibilidad de rutas en el repositorio.
+
 ## Sistema GNSS para Dynatest FWD con RTK3B Budget
 
 ## Objetivo
