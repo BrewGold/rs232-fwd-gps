@@ -455,6 +455,8 @@ void avgCompute15s(uint32_t nowMs) {
       sumLat += avgBuf[idx].lat;
       sumLon += avgBuf[idx].lon;
       cnt++;
+    } else {
+      break;
     }
   }
 
@@ -909,6 +911,7 @@ void updateAutoTest(uint32_t nowMs) {
 
   const bool pass = (autoTest.ggaIn > 0 && autoTest.ggaOut > 0);
   Serial.printf("[autotest] ESTADO: %s\n\n", pass ? "PASS" : "REVISAR CABLEADO/BAUD/PINES");
+  Serial.println("[autotest] Nota: PASS valida flujo GNSS->OUT, heading MAG puede recuperarse en marcha.");
 }
 
 void processNmeaSentence(const char* line, uint32_t nowMs) {
@@ -950,8 +953,6 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
     if (parsedSpeedValid) {
       gnssSpeedMS = parsedSpeedMs;
       gnssSpeedValid = true;
-    } else {
-      gnssSpeedValid = false;
     }
 
     if (parsedCogValid) {
