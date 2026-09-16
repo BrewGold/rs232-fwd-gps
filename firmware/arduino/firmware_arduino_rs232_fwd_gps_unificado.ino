@@ -789,7 +789,10 @@ bool resolveHeadingTrue(uint32_t nowMs, double& headingTrueOut) {
     return true;
   }
 
-  if (gnssSpeedValid && gnssSpeedMS > COG_HEADING_MIN_SPEED_MS && hasLastCog) {
+  if (gnssSpeedValid &&
+      (nowMs - gnssSpeedMsTimestamp <= SPEED_FRESH_MAX_MS) &&
+      gnssSpeedMS > COG_HEADING_MIN_SPEED_MS &&
+      hasLastCog) {
     if (nowMs - lastCogMs <= COG_MAX_AGE_MS) {
       headingTrueOut = wrap360(lastCogDeg);
       lastHeadingTrue = headingTrueOut;
@@ -1024,12 +1027,19 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
   gnssAlt = gga.alt;
   gnssSats = gga.sats;
 
-  strncpy(gnssUtcRaw, gga.utc, sizeof(gnssUtcRaw) - 1);
-  gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
-  gnssUtcParsed = parseUtcToCentis(gnssUtcRaw, gnssUtcCentis);
+  char utcCandidate[16];
+  strncpy(utcCandidate, gga.utc, sizeof(utcCandidate) - 1);
+  utcCandidate[sizeof(utcCandidate) - 1] = '\0';
+
+  uint32_t utcCentisCandidate = 0;
+  gnssUtcParsed = parseUtcToCentis(utcCandidate, utcCentisCandidate);
   if (gnssUtcParsed) {
+    gnssUtcCentis = utcCentisCandidate;
+    strncpy(gnssUtcRaw, utcCandidate, sizeof(gnssUtcRaw) - 1);
+    gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
     gnssUtcAdvanceMs = nowMs;
   } else {
+    gnssUtcRaw[0] = '\0';
     gnssUtcCentis = 0;
     gnssUtcAdvanceMs = nowMs;
   }
