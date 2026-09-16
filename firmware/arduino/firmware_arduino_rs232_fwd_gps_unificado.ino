@@ -290,9 +290,11 @@ bool nmeaToDecimalDegrees(const char* v, const char* hemi, bool isLat, double& o
   if (isLat) {
     if (h == 'S') dec = -dec;
     else if (h != 'N') return false;
+    if (dec < -90.0 || dec > 90.0) return false;
   } else {
     if (h == 'W') dec = -dec;
     else if (h != 'E') return false;
+    if (dec < -180.0 || dec > 180.0) return false;
   }
 
   outDeg = dec;
@@ -834,6 +836,7 @@ bool computeUtcForOutput(uint32_t nowMs, char* utcOut, size_t utcOutSize) {
   if (gnssUtcParsed) {
     const uint32_t baseCentis = gnssUtcCentis;
     const uint32_t baseMs = gnssUtcAdvanceMs;
+    if (nowMs - baseMs > GGA_FRESH_MAX_MS) return false;
     const uint32_t elapsedMs = nowMs - baseMs;
     const uint32_t advancedCentis = baseCentis + (elapsedMs / 10u);
     formatUtcFromCentis(advancedCentis, utcOut, utcOutSize);
