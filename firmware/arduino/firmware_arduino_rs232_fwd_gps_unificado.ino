@@ -811,13 +811,11 @@ void applyOffsetFromAntennaToReference(double inLat, double inLon,
 
 bool computeUtcForOutput(uint32_t nowMs, char* utcOut, size_t utcOutSize) {
   if (gnssUtcParsed) {
-    const uint32_t elapsedMs = nowMs - gnssUtcAdvanceMs;
-    const uint32_t advanceCentis = elapsedMs / 10u;
-    if (advanceCentis > 0) {
-      gnssUtcCentis += advanceCentis;
-      gnssUtcAdvanceMs += advanceCentis * 10u;
-    }
-    formatUtcFromCentis(gnssUtcCentis, utcOut, utcOutSize);
+    const uint32_t baseCentis = gnssUtcCentis;
+    const uint32_t baseMs = gnssUtcAdvanceMs;
+    const uint32_t elapsedMs = nowMs - baseMs;
+    const uint32_t advancedCentis = baseCentis + (elapsedMs / 10u);
+    formatUtcFromCentis(advancedCentis, utcOut, utcOutSize);
     return true;
   }
 
@@ -1050,16 +1048,18 @@ void setup() {
 
 // ================== LOOP ==============================
 void loop() {
-  const uint32_t now = millis();
+  uint32_t now = millis();
 
   ensureMagRecovery(now);
   updateHeadingFromMag(now);
 
   char line[NMEA_LINE_MAX];
   while (nextNmeaLineFromGnss(line, sizeof(line))) {
-    processNmeaSentence(line, millis());
+    now = millis();
+    processNmeaSentence(line, now);
   }
 
+  now = millis();
   updateStopState(now);
   sendAt10Hz(now);
   updateAutoTest(now);
