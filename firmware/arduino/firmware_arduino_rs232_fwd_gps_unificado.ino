@@ -274,6 +274,15 @@ bool verifyNmeaChecksum(const char* line) {
   return calc == expected;
 }
 
+bool utcTextLooksUsable(const char* utc) {
+  if (!utc || utc[0] == '\0') return false;
+  for (size_t i = 0; utc[i] != '\0'; ++i) {
+    const char c = utc[i];
+    if (!((c >= '0' && c <= '9') || c == '.')) return false;
+  }
+  return true;
+}
+
 bool nmeaToDecimalDegrees(const char* v, const char* hemi, bool isLat, double& outDeg) {
   if (!v || !hemi || hemi[0] == '\0') return false;
 
@@ -1039,7 +1048,12 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
     gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
     gnssUtcAdvanceMs = nowMs;
   } else {
-    gnssUtcRaw[0] = '\0';
+    if (utcTextLooksUsable(utcCandidate)) {
+      strncpy(gnssUtcRaw, utcCandidate, sizeof(gnssUtcRaw) - 1);
+      gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
+    } else {
+      gnssUtcRaw[0] = '\0';
+    }
     gnssUtcCentis = 0;
     gnssUtcAdvanceMs = nowMs;
   }
