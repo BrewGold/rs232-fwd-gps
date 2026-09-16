@@ -598,15 +598,18 @@ void setupLeds() {
   digitalWrite(LED_ERR, LOW);
 }
 
+bool gnssFixIsFresh(uint32_t nowMs);
+
 void updateLeds(uint32_t nowMs) {
-  digitalWrite(LED_GNSS, gnssFix ? HIGH : LOW);
+  const bool freshFix = gnssFixIsFresh(nowMs);
+  digitalWrite(LED_GNSS, freshFix ? HIGH : LOW);
 
   if (ledMagPulseUntil != 0 && static_cast<int32_t>(nowMs - ledMagPulseUntil) >= 0) {
     digitalWrite(LED_MAG, LOW);
     ledMagPulseUntil = 0;
   }
 
-  const bool errorActive = (!gnssFix) || magError;
+  const bool errorActive = (!freshFix) || magError;
   if (!errorActive) {
     digitalWrite(LED_ERR, LOW);
     ledErrState = false;
@@ -844,12 +847,17 @@ bool computeUtcForOutput(uint32_t nowMs, char* utcOut, size_t utcOutSize) {
   }
 
   if (gnssUtcRaw[0] != '\0') {
+    if (nowMs - lastGgaMs > GGA_FRESH_MAX_MS) return false;
     strncpy(utcOut, gnssUtcRaw, utcOutSize - 1);
     utcOut[utcOutSize - 1] = '\0';
     return true;
   }
 
   return false;
+}
+
+bool gnssFixIsFresh(uint32_t nowMs) {
+  return gnssFix && ((nowMs - lastGgaMs) <= GGA_FRESH_MAX_MS);
 }
 
 void updateStopState(uint32_t nowMs) {
@@ -889,8 +897,7 @@ void sendAt10Hz(uint32_t nowMs) {
   if (nowMs - lastOutMs < OUT_PERIOD_MS) return;
   lastOutMs = nowMs;
 
-  if (!gnssFix) return;
-  if (nowMs - lastGgaMs > GGA_FRESH_MAX_MS) return;
+  if (!gnssFixIsFresh(nowMs)) return;
 
   double outLat = NAN;
   double outLon = NAN;
