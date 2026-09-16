@@ -48,7 +48,8 @@ Funciones:
 Estado actual:
 
 - Se usa heading magnético filtrado para corrección geométrica.
-- Si el heading magnético falla temporalmente, se puede usar COG de VTG/RMC cuando la velocidad es suficiente.
+- Si el heading magnético falla temporalmente, se usa fallback por COG de VTG/RMC cuando la velocidad > 0.8 m/s y el COG es reciente (<= 2 s).
+- Lecturas I2C con NACK/fallo activan recuperación lógica: reintentos de inicialización del QMC5883L y continuidad de salida GNSS sin bloqueo.
 - El QMC5883L no tiene tilt compensation completa; requiere calibración hard-iron/soft-iron.
 
 ### Comunicación Dynatest

@@ -75,6 +75,7 @@ static const size_t NMEA_LINE_MAX = 224;
 static const uint8_t MAG_INIT_RETRIES = 3;
 static const uint8_t MAG_FAIL_STREAK_LIMIT = 5;
 static const uint32_t MAG_RECOVERY_RETRY_MS = 1000;
+static const uint32_t MAG_HEADING_MAX_AGE_MS = 500;
 
 // --- LEDs no bloqueantes ---
 static const uint32_t LED_MAG_PULSE_MS = 10;
@@ -95,7 +96,7 @@ bool gnssSpeedValid = false;
 char gnssUtcRaw[16] = {0};
 uint32_t gnssUtcCentis = 0;
 bool gnssUtcParsed = false;
-uint32_t gnssUtcRxMs = 0;
+uint32_t gnssUtcAdvanceMs = 0;
 
 // Estado heading/fuentes
 bool magOk = false;
@@ -105,6 +106,7 @@ float headingFiltered = NAN;
 
 double lastHeadingTrue = NAN;
 bool hasLastHeadingTrue = false;
+uint32_t lastHeadingTrueMs = 0;
 
 double lastCogDeg = NAN;
 bool hasLastCog = false;
@@ -556,6 +558,7 @@ void updateHeadingFromMag(uint32_t nowMs) {
 
     lastHeadingTrue = wrap360(static_cast<double>(headingFiltered) + declinationDeg);
     hasLastHeadingTrue = true;
+    lastHeadingTrueMs = nowMs;
     magFailStreak = 0;
     magError = false;
     ledMagPulseUntil = millis() + LED_MAG_PULSE_MS;
@@ -755,7 +758,8 @@ bool nextNmeaLineFromGnss(char* outLine, size_t outSize) {
 }
 
 bool resolveHeadingTrue(uint32_t nowMs, double& headingTrueOut) {
-  if (magOk && hasLastHeadingTrue && isfinite(lastHeadingTrue)) {
+  if (magOk && hasLastHeadingTrue && isfinite(lastHeadingTrue) &&
+      (nowMs - lastHeadingTrueMs <= MAG_HEADING_MAX_AGE_MS)) {
     headingTrueOut = wrap360(lastHeadingTrue);
     return true;
   }
@@ -765,6 +769,7 @@ bool resolveHeadingTrue(uint32_t nowMs, double& headingTrueOut) {
       headingTrueOut = wrap360(lastCogDeg);
       lastHeadingTrue = headingTrueOut;
       hasLastHeadingTrue = true;
+      lastHeadingTrueMs = nowMs;
       return true;
     }
   }
@@ -806,9 +811,13 @@ void applyOffsetFromAntennaToReference(double inLat, double inLon,
 
 bool computeUtcForOutput(uint32_t nowMs, char* utcOut, size_t utcOutSize) {
   if (gnssUtcParsed) {
-    const uint32_t elapsedMs = nowMs - gnssUtcRxMs;
-    const uint32_t advancedCentis = gnssUtcCentis + (elapsedMs / 10u);
-    formatUtcFromCentis(advancedCentis, utcOut, utcOutSize);
+    const uint32_t elapsedMs = nowMs - gnssUtcAdvanceMs;
+    const uint32_t advanceCentis = elapsedMs / 10u;
+    if (advanceCentis > 0) {
+      gnssUtcCentis += advanceCentis;
+      gnssUtcAdvanceMs += advanceCentis * 10u;
+    }
+    formatUtcFromCentis(gnssUtcCentis, utcOut, utcOutSize);
     return true;
   }
 
@@ -980,7 +989,9 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
   strncpy(gnssUtcRaw, gga.utc, sizeof(gnssUtcRaw) - 1);
   gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
   gnssUtcParsed = parseUtcToCentis(gnssUtcRaw, gnssUtcCentis);
-  if (gnssUtcParsed) gnssUtcRxMs = nowMs;
+  if (gnssUtcParsed) {
+    gnssUtcAdvanceMs = nowMs;
+  }
 
   if (gnssFix) autoTest.gnssAnyFix = true;
 
