@@ -1,85 +1,130 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <ctype.h>
 
 // ======================================================
 //  RS232 FWD GPS - UNIFICADO (.ino)
 //  - Lee GNSS UM980 por UART_IN
-//  - Lee heading de magnetómetro I2C (QMC5883L típico)
-//  - Calcula coordenada corregida por offset
-//  - Genera y ENVÍA $GPGGA (GPSGGA) por UART_OUT -> MAX3232
-//  - Cuando está detenido: promedio 15s y envía ESE MISMO valor a 10Hz
-//  - Logs por USB (Serial)
+//  - Lee heading de magnetómetro I2C (QMC5883L)
+//  - Calcula coordenada corregida por offset (punto referencia Dynatest)
+//  - Genera y ENVÍA $GPGGA por UART_OUT -> MAX3232
+//  - En detenido: promedio circular de 15s y salida a 10Hz
+//  - Diseño no bloqueante para operación prolongada
 // ======================================================
 
 // ================== CONFIGURACIÓN =====================
 // --- UART entrada GNSS (UM980 TX3/RX3 hacia ESP32) ---
-static const int GNSS_RX_PIN   = 44;      // ESP32 RX <- TX3 UM980
-static const int GNSS_TX_PIN   = 43;      // ESP32 TX -> RX3 UM980 (opcional)
+static const int GNSS_RX_PIN = 44;      // ESP32 RX <- TX3 UM980
+static const int GNSS_TX_PIN = 43;      // ESP32 TX -> RX3 UM980 (opcional)
 static const uint32_t GNSS_BAUD = 115200;
 
-// --- UART salida RS232 (ESP32 -> MAX3232) ---
-static const int OUT_TX_PIN    = 17;      // ESP32 TX -> RX MAX3232
-static const int OUT_RX_PIN    = 18;      // ESP32 RX <- TX MAX3232 (opcional)
-static const uint32_t OUT_BAUD = 115200;  // ajusta a tu receptor si requiere otro
+// --- UART salida RS232 (ESP32 -> MAX3232 / Dynatest Embedded) ---
+static const int OUT_TX_PIN = 17;       // ESP32 TX -> RX MAX3232
+static const int OUT_RX_PIN = 18;       // ESP32 RX <- TX MAX3232 (opcional)
+static const uint32_t OUT_BAUD = 38400; // Dynatest Embedded esperado 38400
 
-// --- I2C magnetómetro ---
+// --- I2C magnetómetro (vía RJ45 en instalación final) ---
 static const int I2C_SDA_PIN = 8;
 static const int I2C_SCL_PIN = 9;
-static const uint8_t MAG_ADDR = 0x0D;     // QMC5883L típico
+static const uint8_t MAG_ADDR = 0x0D;   // QMC5883L típico
 
-// --- LEDs (ajusta a tu placa) ---
-static const int LED_GNSS = 2;   // fix
-static const int LED_MAG  = 4;   // pulso lectura mag
-static const int LED_ERR  = 5;   // error
+// --- LEDs (vía RJ45 según arnés externo) ---
+static const int LED_GNSS = 2;          // fix
+static const int LED_MAG = 4;           // pulso lectura mag
+static const int LED_ERR = 5;           // estado error
 
 // --- Navegación/offset ---
-static double offsetMeters   = 1.50;   // distancia de corrección
-static bool   lateralOffset  = false;  // false=adelante, true=lateral
-static bool   offsetToRight  = true;   // si lateral=true
-static double declinationDeg = -4.8;   // declinación local (ajustar)
-static float  headingAlpha   = 0.20f;  // filtro heading 0..1
+// offsetAlongHeadingMeters:
+//   >0 : punto referencia delante de la antena
+//   <0 : punto referencia detrás de la antena
+// Para mástil donde antena+magnetómetro van delante del centro del plato,
+// usar valor negativo para aplicar heading + 180° internamente.
+static double offsetAlongHeadingMeters = -1.50;
+// offsetLateralMeters:
+//   >0 : derecha del avance
+//   <0 : izquierda del avance
+static double offsetLateralMeters = 0.0;
+
+static double declinationDeg = -4.8;    // declinación local (ajustar campo)
+static float headingAlpha = 0.20f;      // filtro heading 0..1
+
+// --- Política fix quality ---
+// NMEA no define un valor universal propio para HAS. Por defecto se conserva
+// el fix quality recibido del UM980 sin remapeo.
+static const bool FIXQ_REMAP_ENABLED = false;
 
 // --- Detección detenido y promedio ---
 static const double STOP_SPEED_MS_ENTER = 0.20;  // entra a detenido
-static const double STOP_SPEED_MS_EXIT  = 0.30;  // sale de detenido (histéresis)
-static const uint32_t STOP_CONFIRM_MS   = 2000;  // confirmar 2s
-static const uint32_t AVG_WINDOW_MS     = 15000; // promedio 15s
-static const uint32_t OUT_PERIOD_MS     = 100;   // 10Hz
+static const double STOP_SPEED_MS_EXIT = 0.30;   // sale de detenido (histéresis)
+static const uint32_t STOP_CONFIRM_MS = 2000;    // confirmar 2s
+static const uint32_t AVG_WINDOW_MS = 15000;     // promedio 15s
+static const uint32_t OUT_PERIOD_MS = 100;       // 10Hz
+
+// --- Fallback heading por COG ---
+static const double COG_HEADING_MIN_SPEED_MS = 0.80;
+static const uint32_t COG_MAX_AGE_MS = 2000;
+
+// --- Robustez NMEA ---
+static const size_t NMEA_LINE_MAX = 224;
+
+// --- Robustez magnetómetro ---
+static const uint8_t MAG_INIT_RETRIES = 3;
+static const uint8_t MAG_FAIL_STREAK_LIMIT = 5;
+static const uint32_t MAG_RECOVERY_RETRY_MS = 1000;
+
+// --- LEDs no bloqueantes ---
+static const uint32_t LED_MAG_PULSE_MS = 10;
+static const uint32_t LED_ERR_BLINK_MS = 250;
 
 // ================== OBJETOS ===========================
 HardwareSerial GNSS(1);  // entrada UM980
 HardwareSerial OUT(2);   // salida al MAX3232
-
-String nmeaLine;
 
 // Estado GNSS
 bool gnssFix = false;
 double gnssLat = NAN, gnssLon = NAN, gnssAlt = NAN;
 int gnssFixQ = 0;
 uint8_t gnssSats = 0;
-String gnssUtc = "";
-double gnssSpeedMS = NAN; // desde VTG/RMC
+double gnssSpeedMS = NAN;
+bool gnssSpeedValid = false;
 
-// Estado magnetómetro
+char gnssUtcRaw[16] = {0};
+uint32_t gnssUtcCentis = 0;
+bool gnssUtcParsed = false;
+uint32_t gnssUtcRxMs = 0;
+
+// Estado heading/fuentes
 bool magOk = false;
+bool magError = false;
 float magHeading = NAN;
 float headingFiltered = NAN;
+
+double lastHeadingTrue = NAN;
+bool hasLastHeadingTrue = false;
+
+double lastCogDeg = NAN;
+bool hasLastCog = false;
+uint32_t lastCogMs = 0;
 
 // Tiempos/contadores
 uint32_t lastLogMs = 0;
 uint32_t ggaCount = 0;
 uint32_t outCount = 0;
 uint32_t lastOutMs = 0;
+uint32_t malformedNmeaCount = 0;
 
 // Estado detenido/movimiento
 bool isStopped = false;
 uint32_t stopCandidateSince = 0;
 uint32_t moveCandidateSince = 0;
 
-// Última coordenada corregida instantánea
-bool hasCorrectedNow = false;
-double correctedNowLat = NAN, correctedNowLon = NAN;
+// Última coordenada para salida instantánea
+bool hasOutputNow = false;
+double outputNowLat = NAN, outputNowLon = NAN;
 
 // Buffer promedio 15s (anillo)
 struct Sample {
@@ -95,147 +140,237 @@ int avgCount = 0;  // elementos válidos
 bool avgHas = false;
 double avgLat = NAN, avgLon = NAN;
 
+// Lector robusto de líneas NMEA
+char nmeaLineBuf[NMEA_LINE_MAX];
+size_t nmeaLineLen = 0;
+bool nmeaOverflow = false;
+
+// LED no bloqueante
+uint32_t ledMagPulseUntil = 0;
+uint32_t ledErrBlinkToggleMs = 0;
+bool ledErrState = false;
+
+// Magnetómetro recuperación
+uint8_t magFailStreak = 0;
+uint32_t lastMagRecoveryTryMs = 0;
+
+// Autotest no bloqueante
+struct AutoTestState {
+  bool active;
+  uint32_t startMs;
+  uint32_t ggaIn;
+  uint32_t ggaOut;
+  uint32_t magReads;
+  bool magAnyOk;
+  bool gnssAnyFix;
+};
+AutoTestState autoTest = {false, 0, 0, 0, 0, false, false};
+
 // ================== UTILIDADES ========================
 static const double R_EARTH = 6378137.0;
 
 double wrap360(double v) {
-  while (v < 0) v += 360.0;
+  while (v < 0.0) v += 360.0;
   while (v >= 360.0) v -= 360.0;
   return v;
 }
 
-double nmeaToDecimalDegrees(const String& v, const String& hemi) {
-  if (v.length() < 3) return NAN;
-  double raw = v.toDouble();
-  int deg = (int)(raw / 100.0);
-  double min = raw - (deg * 100.0);
-  double dec = deg + min / 60.0;
-  if (hemi == "S" || hemi == "W") dec = -dec;
-  return dec;
+bool parseDoubleStrict(const char* s, double& out) {
+  if (!s || s[0] == '\0') return false;
+  char* end = nullptr;
+  const double v = strtod(s, &end);
+  if (end == s || (end && end[0] != '\0') || !isfinite(v)) return false;
+  out = v;
+  return true;
 }
 
-void decimalDegreesToNmea(double deg, bool isLat, String& valueOut, String& hemiOut) {
-  double a = fabs(deg);
-  int d = (int)a;
-  double m = (a - d) * 60.0;
-
-  char buf[24];
-  if (isLat) {
-    snprintf(buf, sizeof(buf), "%02d%07.4f", d, m); // ddmm.mmmm
-    hemiOut = (deg >= 0) ? "N" : "S";
-  } else {
-    snprintf(buf, sizeof(buf), "%03d%07.4f", d, m); // dddmm.mmmm
-    hemiOut = (deg >= 0) ? "E" : "W";
+bool parseUIntStrict(const char* s, uint32_t& out) {
+  if (!s || s[0] == '\0') return false;
+  uint32_t value = 0;
+  for (size_t i = 0; s[i] != '\0'; ++i) {
+    if (s[i] < '0' || s[i] > '9') return false;
+    value = value * 10u + static_cast<uint32_t>(s[i] - '0');
   }
-  valueOut = String(buf);
+  out = value;
+  return true;
+}
+
+bool isSentenceType(const char* line, const char* type3) {
+  return line &&
+         strlen(line) >= 6 &&
+         line[0] == '$' &&
+         line[3] == type3[0] &&
+         line[4] == type3[1] &&
+         line[5] == type3[2];
+}
+
+uint8_t nmeaChecksum(const char* sentenceNoDollarNoStar) {
+  uint8_t cs = 0;
+  if (!sentenceNoDollarNoStar) return cs;
+  for (size_t i = 0; sentenceNoDollarNoStar[i] != '\0'; ++i) {
+    cs ^= static_cast<uint8_t>(sentenceNoDollarNoStar[i]);
+  }
+  return cs;
+}
+
+bool nmeaToDecimalDegrees(const char* v, const char* hemi, bool isLat, double& outDeg) {
+  if (!v || !hemi || hemi[0] == '\0') return false;
+
+  double raw = 0.0;
+  if (!parseDoubleStrict(v, raw)) return false;
+
+  const int deg = static_cast<int>(raw / 100.0);
+  const double minutes = raw - (static_cast<double>(deg) * 100.0);
+  if (minutes < 0.0 || minutes >= 60.0) return false;
+
+  double dec = static_cast<double>(deg) + (minutes / 60.0);
+
+  const char h = static_cast<char>(toupper(static_cast<unsigned char>(hemi[0])));
+  if (isLat) {
+    if (h == 'S') dec = -dec;
+    else if (h != 'N') return false;
+  } else {
+    if (h == 'W') dec = -dec;
+    else if (h != 'E') return false;
+  }
+
+  outDeg = dec;
+  return true;
+}
+
+void decimalDegreesToNmea(double deg, bool isLat, char* valueOut, size_t valueOutSize, char& hemiOut) {
+  const double a = fabs(deg);
+  const int d = static_cast<int>(a);
+  const double m = (a - static_cast<double>(d)) * 60.0;
+
+  if (isLat) {
+    snprintf(valueOut, valueOutSize, "%02d%07.4f", d, m); // ddmm.mmmm
+    hemiOut = (deg >= 0.0) ? 'N' : 'S';
+  } else {
+    snprintf(valueOut, valueOutSize, "%03d%07.4f", d, m); // dddmm.mmmm
+    hemiOut = (deg >= 0.0) ? 'E' : 'W';
+  }
 }
 
 void destinationPoint(double latDeg, double lonDeg, double bearingDeg, double distM,
                       double& outLatDeg, double& outLonDeg) {
-  double lat1 = latDeg * DEG_TO_RAD;
-  double lon1 = lonDeg * DEG_TO_RAD;
-  double brng = bearingDeg * DEG_TO_RAD;
-  double ang = distM / R_EARTH;
+  const double lat1 = latDeg * DEG_TO_RAD;
+  const double lon1 = lonDeg * DEG_TO_RAD;
+  const double brng = bearingDeg * DEG_TO_RAD;
+  const double ang = distM / R_EARTH;
 
-  double sinLat1 = sin(lat1), cosLat1 = cos(lat1);
-  double sinAng = sin(ang), cosAng = cos(ang);
+  const double sinLat1 = sin(lat1);
+  const double cosLat1 = cos(lat1);
+  const double sinAng = sin(ang);
+  const double cosAng = cos(ang);
 
-  double sinLat2 = sinLat1 * cosAng + cosLat1 * sinAng * cos(brng);
-  double lat2 = asin(sinLat2);
+  const double sinLat2 = sinLat1 * cosAng + cosLat1 * sinAng * cos(brng);
+  const double lat2 = asin(sinLat2);
 
-  double y = sin(brng) * sinAng * cosLat1;
-  double x = cosAng - sinLat1 * sinLat2;
-  double lon2 = lon1 + atan2(y, x);
+  const double y = sin(brng) * sinAng * cosLat1;
+  const double x = cosAng - sinLat1 * sinLat2;
+  const double lon2 = lon1 + atan2(y, x);
 
   outLatDeg = lat2 * RAD_TO_DEG;
   outLonDeg = lon2 * RAD_TO_DEG;
 }
 
-String nmeaChecksum(const String& sentenceNoDollarNoStar) {
-  uint8_t cs = 0;
-  for (size_t i = 0; i < sentenceNoDollarNoStar.length(); i++) cs ^= (uint8_t)sentenceNoDollarNoStar[i];
-  char b[3];
-  snprintf(b, sizeof(b), "%02X", cs);
-  return String(b);
-}
-
-int splitCSV(const String& s, String out[], int maxFields) {
-  int c = 0, st = 0;
-  for (int i = 0; i <= s.length(); i++) {
-    if (i == s.length() || s[i] == ',') {
-      if (c < maxFields) out[c++] = s.substring(st, i);
-      st = i + 1;
+int splitCsvInPlace(char* s, char* out[], int maxFields) {
+  if (!s || !out || maxFields <= 0) return 0;
+  int c = 0;
+  out[c++] = s;
+  for (size_t i = 0; s[i] != '\0' && c < maxFields; ++i) {
+    if (s[i] == ',') {
+      s[i] = '\0';
+      out[c++] = &s[i + 1];
     }
   }
   return c;
 }
 
-bool parseGGA(const String& line, double& lat, double& lon, double& alt, int& fixQ, uint8_t& sats, String& utc) {
-  if (!(line.startsWith("$GPGGA") || line.startsWith("$GNGGA"))) return false;
+bool parseUtcToCentis(const char* utc, uint32_t& outCentis) {
+  if (!utc) return false;
+  const size_t len = strlen(utc);
+  if (len < 6) return false;
 
-  String core = line;
-  int star = core.indexOf('*');
-  if (star > 0) core = core.substring(0, star);
+  char hhStr[3] = {utc[0], utc[1], '\0'};
+  char mmStr[3] = {utc[2], utc[3], '\0'};
+  char ssStr[3] = {utc[4], utc[5], '\0'};
 
-  String f[20];
-  int n = splitCSV(core, f, 20);
-  if (n < 10) return false;
+  uint32_t hh = 0, mm = 0, ss = 0;
+  if (!parseUIntStrict(hhStr, hh) || !parseUIntStrict(mmStr, mm) || !parseUIntStrict(ssStr, ss)) return false;
+  if (hh > 23 || mm > 59 || ss > 59) return false;
 
-  utc  = f[1];
-  lat  = nmeaToDecimalDegrees(f[2], f[3]);
-  lon  = nmeaToDecimalDegrees(f[4], f[5]);
-  fixQ = f[6].toInt();
-  sats = (uint8_t)f[7].toInt();
-  alt  = f[9].toDouble();
+  uint32_t centis = (hh * 360000u) + (mm * 6000u) + (ss * 100u);
 
-  if (isnan(lat) || isnan(lon)) return false;
+  if (len > 6 && utc[6] == '.') {
+    uint32_t frac = 0;
+    uint32_t mult = 10;
+    for (size_t i = 7; utc[i] != '\0' && mult > 0; ++i) {
+      if (utc[i] < '0' || utc[i] > '9') return false;
+      frac += static_cast<uint32_t>(utc[i] - '0') * mult;
+      mult /= 10;
+    }
+    centis += frac;
+  }
+
+  outCentis = centis;
   return true;
 }
 
-bool parseVTGSpeed(const String& line, double& speedMS) {
-  if (!(line.startsWith("$GPVTG") || line.startsWith("$GNVTG"))) return false;
-  String core = line;
-  int star = core.indexOf('*');
-  if (star > 0) core = core.substring(0, star);
+void formatUtcFromCentis(uint32_t centis, char* out, size_t outSize) {
+  static const uint32_t DAY_CENTIS = 24u * 3600u * 100u;
+  centis %= DAY_CENTIS;
 
-  String f[20];
-  int n = splitCSV(core, f, 20);
-  if (n < 8) return false;
+  const uint32_t hh = centis / 360000u;
+  centis %= 360000u;
+  const uint32_t mm = centis / 6000u;
+  centis %= 6000u;
+  const uint32_t ss = centis / 100u;
+  const uint32_t cs = centis % 100u;
 
-  // Campo 7 (index 7) suele ser km/h
-  double kmh = f[7].toDouble();
-  speedMS = kmh / 3.6;
-  return true;
+  snprintf(out, outSize, "%02lu%02lu%02lu.%02lu",
+           static_cast<unsigned long>(hh),
+           static_cast<unsigned long>(mm),
+           static_cast<unsigned long>(ss),
+           static_cast<unsigned long>(cs));
 }
 
-bool parseRMCSpeed(const String& line, double& speedMS) {
-  if (!(line.startsWith("$GPRMC") || line.startsWith("$GNRMC"))) return false;
-  String core = line;
-  int star = core.indexOf('*');
-  if (star > 0) core = core.substring(0, star);
-
-  String f[20];
-  int n = splitCSV(core, f, 20);
-  if (n < 8) return false;
-
-  // Campo 7 (index 7) en nudos
-  double knots = f[7].toDouble();
-  speedMS = knots * 0.514444;
-  return true;
+int mapFixQuality(int rawFixQ) {
+  if (!FIXQ_REMAP_ENABLED) return rawFixQ;
+  // Política opcional/experimental, dejar explícita si se activa.
+  return rawFixQ;
 }
 
-// Construye SIEMPRE GPSGGA -> "$GPGGA,..."
-String buildCorrectedGPGGA(const String& utc, double lat, double lon, int fixQ, uint8_t sats, double altM) {
-  String latStr, ns, lonStr, ew;
-  decimalDegreesToNmea(lat, true,  latStr, ns);
-  decimalDegreesToNmea(lon, false, lonStr, ew);
+bool buildCorrectedGPGGA(char* outSentence, size_t outSize,
+                         const char* utc, double lat, double lon,
+                         int fixQ, uint8_t sats, double altM) {
+  if (!outSentence || outSize < 16 || !utc) return false;
 
-  String body =
-    "GPGGA," + utc + "," + latStr + "," + ns + "," + lonStr + "," + ew + "," +
-    String(fixQ) + "," + String(sats) + ",1.0," + String(altM, 2) + ",M,0.0,M,,";
+  char latStr[16];
+  char lonStr[16];
+  char ns = 'N';
+  char ew = 'E';
 
-  String cs = nmeaChecksum(body);
-  return "$" + body + "*" + cs;
+  decimalDegreesToNmea(lat, true, latStr, sizeof(latStr), ns);
+  decimalDegreesToNmea(lon, false, lonStr, sizeof(lonStr), ew);
+
+  char body[192];
+  const int written = snprintf(body, sizeof(body),
+                               "GPGGA,%s,%s,%c,%s,%c,%d,%u,1.0,%.2f,M,0.0,M,,",
+                               utc,
+                               latStr,
+                               ns,
+                               lonStr,
+                               ew,
+                               mapFixQuality(fixQ),
+                               static_cast<unsigned int>(sats),
+                               altM);
+  if (written <= 0 || static_cast<size_t>(written) >= sizeof(body)) return false;
+
+  const uint8_t cs = nmeaChecksum(body);
+  const int outWritten = snprintf(outSentence, outSize, "$%s*%02X", body, cs);
+  return (outWritten > 0 && static_cast<size_t>(outWritten) < outSize);
 }
 
 void avgClear() {
@@ -249,32 +384,31 @@ void avgClear() {
 void avgAdd(double lat, double lon, uint32_t nowMs) {
   avgBuf[avgHead].lat = lat;
   avgBuf[avgHead].lon = lon;
-  avgBuf[avgHead].ms  = nowMs;
+  avgBuf[avgHead].ms = nowMs;
   avgHead = (avgHead + 1) % MAX_SAMPLES;
   if (avgCount < MAX_SAMPLES) avgCount++;
 }
 
 void avgCompute15s(uint32_t nowMs) {
-  double sumLat = 0.0, sumLon = 0.0;
+  double sumLat = 0.0;
+  double sumLon = 0.0;
   int cnt = 0;
 
-  for (int i = 0; i < avgCount; i++) {
+  for (int i = 0; i < avgCount; ++i) {
     int idx = avgHead - 1 - i;
     if (idx < 0) idx += MAX_SAMPLES;
 
-    uint32_t age = nowMs - avgBuf[idx].ms;
+    const uint32_t age = nowMs - avgBuf[idx].ms;
     if (age <= AVG_WINDOW_MS) {
       sumLat += avgBuf[idx].lat;
       sumLon += avgBuf[idx].lon;
       cnt++;
-    } else {
-      break; // por orden temporal inverso
     }
   }
 
   if (cnt > 0) {
-    avgLat = sumLat / cnt;
-    avgLon = sumLon / cnt;
+    avgLat = sumLat / static_cast<double>(cnt);
+    avgLon = sumLon / static_cast<double>(cnt);
     avgHas = true;
   } else {
     avgHas = false;
@@ -293,29 +427,94 @@ bool magReadBytes(uint8_t reg, uint8_t* data, uint8_t len) {
   Wire.beginTransmission(MAG_ADDR);
   Wire.write(reg);
   if (Wire.endTransmission(false) != 0) return false;
-  uint8_t got = Wire.requestFrom((int)MAG_ADDR, (int)len);
+
+  const uint8_t got = Wire.requestFrom(static_cast<int>(MAG_ADDR), static_cast<int>(len));
   if (got != len) return false;
+
   for (uint8_t i = 0; i < len; i++) data[i] = Wire.read();
   return true;
 }
 
-bool initMagnetometerQMC() {
+bool initMagnetometerQMCOnce() {
   if (!magWrite8(0x0B, 0x01)) return false; // set/reset period
   if (!magWrite8(0x09, 0x1D)) return false; // OSR=512 RNG=8G ODR=200Hz CONT
   return true;
+}
+
+bool initMagnetometerQMC() {
+  for (uint8_t i = 0; i < MAG_INIT_RETRIES; ++i) {
+    if (initMagnetometerQMCOnce()) return true;
+  }
+  return false;
 }
 
 bool readMagHeading(float& headingDegOut) {
   uint8_t raw[6];
   if (!magReadBytes(0x00, raw, 6)) return false;
 
-  int16_t x = (int16_t)(raw[1] << 8 | raw[0]);
-  int16_t y = (int16_t)(raw[3] << 8 | raw[2]);
+  const int16_t x = static_cast<int16_t>((raw[1] << 8) | raw[0]);
+  const int16_t y = static_cast<int16_t>((raw[3] << 8) | raw[2]);
+  if (x == 0 && y == 0) return false;
 
-  float hdg = atan2f((float)y, (float)x) * 180.0f / PI;
-  if (hdg < 0) hdg += 360.0f;
+  float hdg = atan2f(static_cast<float>(y), static_cast<float>(x)) * 180.0f / PI;
+  if (hdg < 0.0f) hdg += 360.0f;
   headingDegOut = hdg;
   return true;
+}
+
+void ensureMagRecovery(uint32_t nowMs) {
+  if (magOk) return;
+  if (nowMs - lastMagRecoveryTryMs < MAG_RECOVERY_RETRY_MS) return;
+
+  lastMagRecoveryTryMs = nowMs;
+  const bool recovered = initMagnetometerQMC();
+  magOk = recovered;
+
+  if (recovered) {
+    magFailStreak = 0;
+    magError = false;
+    Serial.println("[mag] Recuperado tras reintento I2C");
+  } else {
+    magError = true;
+  }
+}
+
+void updateHeadingFromMag(uint32_t nowMs) {
+  (void)nowMs;
+  if (!magOk) return;
+
+  float h = NAN;
+  if (readMagHeading(h)) {
+    magHeading = h;
+    autoTest.magReads++;
+    autoTest.magAnyOk = true;
+
+    if (isnan(headingFiltered)) {
+      headingFiltered = h;
+    } else {
+      const float a = headingFiltered * DEG_TO_RAD;
+      const float b = h * DEG_TO_RAD;
+      const float sx = (1.0f - headingAlpha) * cosf(a) + headingAlpha * cosf(b);
+      const float sy = (1.0f - headingAlpha) * sinf(a) + headingAlpha * sinf(b);
+      headingFiltered = atan2f(sy, sx) * 180.0f / PI;
+      if (headingFiltered < 0.0f) headingFiltered += 360.0f;
+    }
+
+    lastHeadingTrue = wrap360(static_cast<double>(headingFiltered) + declinationDeg);
+    hasLastHeadingTrue = true;
+    magFailStreak = 0;
+    magError = false;
+    ledMagPulseUntil = millis() + LED_MAG_PULSE_MS;
+    digitalWrite(LED_MAG, HIGH);
+    return;
+  }
+
+  if (magFailStreak < 255) magFailStreak++;
+  if (magFailStreak >= MAG_FAIL_STREAK_LIMIT) {
+    magOk = false;
+    magError = true;
+    Serial.println("[mag] Error de lectura I2C, entrando en modo recuperación");
+  }
 }
 
 // ================== LEDS ==============================
@@ -328,84 +527,245 @@ void setupLeds() {
   digitalWrite(LED_ERR, LOW);
 }
 
-void setFixLeds(bool ok) {
-  digitalWrite(LED_GNSS, ok ? HIGH : LOW);
-  digitalWrite(LED_ERR,  ok ? LOW  : HIGH);
+void updateLeds(uint32_t nowMs) {
+  digitalWrite(LED_GNSS, gnssFix ? HIGH : LOW);
+
+  if (ledMagPulseUntil != 0 && static_cast<int32_t>(nowMs - ledMagPulseUntil) >= 0) {
+    digitalWrite(LED_MAG, LOW);
+    ledMagPulseUntil = 0;
+  }
+
+  const bool errorActive = (!gnssFix) || magError;
+  if (!errorActive) {
+    digitalWrite(LED_ERR, LOW);
+    ledErrState = false;
+    ledErrBlinkToggleMs = nowMs;
+    return;
+  }
+
+  if (nowMs - ledErrBlinkToggleMs >= LED_ERR_BLINK_MS) {
+    ledErrBlinkToggleMs = nowMs;
+    ledErrState = !ledErrState;
+    digitalWrite(LED_ERR, ledErrState ? HIGH : LOW);
+  }
 }
 
-void pulseLed(uint8_t pin, uint16_t ms = 8) {
-  digitalWrite(pin, HIGH);
-  delay(ms);
-  digitalWrite(pin, LOW);
+// ================== PARSERS NMEA ======================
+struct GgaData {
+  bool valid;
+  double lat;
+  double lon;
+  double alt;
+  int fixQ;
+  uint8_t sats;
+  char utc[16];
+};
+
+bool parseGGA(const char* line, GgaData& out) {
+  out.valid = false;
+  if (!isSentenceType(line, "GGA")) return false;
+
+  char work[NMEA_LINE_MAX];
+  strncpy(work, line, sizeof(work) - 1);
+  work[sizeof(work) - 1] = '\0';
+
+  char* star = strchr(work, '*');
+  if (star) *star = '\0';
+
+  char* fields[20];
+  const int n = splitCsvInPlace(work, fields, 20);
+  if (n < 10) return false;
+
+  double lat = NAN;
+  double lon = NAN;
+  if (!nmeaToDecimalDegrees(fields[2], fields[3], true, lat)) return false;
+  if (!nmeaToDecimalDegrees(fields[4], fields[5], false, lon)) return false;
+
+  uint32_t fixQu = 0;
+  uint32_t satsu = 0;
+  double alt = 0.0;
+
+  if (!parseUIntStrict(fields[6], fixQu)) fixQu = 0;
+  if (!parseUIntStrict(fields[7], satsu)) satsu = 0;
+  if (!parseDoubleStrict(fields[9], alt)) alt = isfinite(gnssAlt) ? gnssAlt : 0.0;
+
+  strncpy(out.utc, fields[1] ? fields[1] : "", sizeof(out.utc) - 1);
+  out.utc[sizeof(out.utc) - 1] = '\0';
+  out.lat = lat;
+  out.lon = lon;
+  out.alt = alt;
+  out.fixQ = static_cast<int>(fixQu);
+  out.sats = static_cast<uint8_t>(satsu > 255u ? 255u : satsu);
+  out.valid = true;
+  return true;
 }
 
-void runAutoTest10s() {
-  Serial.println("\n[autotest] Iniciando prueba de 10s...");
-  uint32_t t0 = millis();
+bool parseVTG(const char* line, bool& speedValid, double& speedMs, bool& cogValid, double& cogDeg) {
+  speedValid = false;
+  cogValid = false;
+  if (!isSentenceType(line, "VTG")) return false;
 
-  uint32_t ggaIn = 0;
-  uint32_t ggaOut = 0;
-  uint32_t magReads = 0;
-  bool magAnyOk = false;
-  bool gnssAnyFix = false;
+  char work[NMEA_LINE_MAX];
+  strncpy(work, line, sizeof(work) - 1);
+  work[sizeof(work) - 1] = '\0';
 
-  String line;
-  while (millis() - t0 < 10000) {
-    float h;
-    if (magOk && readMagHeading(h)) {
-      magReads++;
-      magAnyOk = true;
-      magHeading = h;
-      if (isnan(headingFiltered)) headingFiltered = h;
+  char* star = strchr(work, '*');
+  if (star) *star = '\0';
+
+  char* fields[20];
+  const int n = splitCsvInPlace(work, fields, 20);
+  if (n < 9) return true;
+
+  double kmh = 0.0;
+  if (parseDoubleStrict(fields[7], kmh)) {
+    speedMs = kmh / 3.6;
+    speedValid = true;
+  }
+
+  double cog = 0.0;
+  if (parseDoubleStrict(fields[1], cog)) {
+    cogDeg = wrap360(cog);
+    cogValid = true;
+  }
+
+  return true;
+}
+
+bool parseRMC(const char* line, bool& speedValid, double& speedMs, bool& cogValid, double& cogDeg) {
+  speedValid = false;
+  cogValid = false;
+  if (!isSentenceType(line, "RMC")) return false;
+
+  char work[NMEA_LINE_MAX];
+  strncpy(work, line, sizeof(work) - 1);
+  work[sizeof(work) - 1] = '\0';
+
+  char* star = strchr(work, '*');
+  if (star) *star = '\0';
+
+  char* fields[20];
+  const int n = splitCsvInPlace(work, fields, 20);
+  if (n < 9) return true;
+
+  double knots = 0.0;
+  if (parseDoubleStrict(fields[7], knots)) {
+    speedMs = knots * 0.514444;
+    speedValid = true;
+  }
+
+  double cog = 0.0;
+  if (parseDoubleStrict(fields[8], cog)) {
+    cogDeg = wrap360(cog);
+    cogValid = true;
+  }
+
+  return true;
+}
+
+bool nextNmeaLineFromGnss(char* outLine, size_t outSize) {
+  while (GNSS.available()) {
+    const char c = static_cast<char>(GNSS.read());
+
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      if (nmeaOverflow) {
+        nmeaOverflow = false;
+        nmeaLineLen = 0;
+        malformedNmeaCount++;
+        continue;
+      }
+
+      if (nmeaLineLen == 0) continue;
+
+      nmeaLineBuf[nmeaLineLen] = '\0';
+      strncpy(outLine, nmeaLineBuf, outSize - 1);
+      outLine[outSize - 1] = '\0';
+      nmeaLineLen = 0;
+      return true;
     }
 
-    while (GNSS.available()) {
-      char c = (char)GNSS.read();
-      if (c == '\n') {
-        line.trim();
-        if (line.length() > 0) {
-          double lat, lon, alt;
-          int fixQ;
-          uint8_t sats;
-          String utc;
-          if (parseGGA(line, lat, lon, alt, fixQ, sats, utc)) {
-            ggaIn++;
-            if (fixQ > 0) gnssAnyFix = true;
+    if (nmeaOverflow) continue;
 
-            double outLat = lat, outLon = lon;
-            if (!isnan(headingFiltered)) {
-              double headingTrue = wrap360((double)headingFiltered + declinationDeg);
-              double bearing = lateralOffset
-                ? wrap360(headingTrue + (offsetToRight ? 90.0 : -90.0))
-                : headingTrue;
-              destinationPoint(lat, lon, bearing, offsetMeters, outLat, outLon);
-            }
-
-            String gpgga = buildCorrectedGPGGA(utc, outLat, outLon, fixQ, sats, alt);
-            OUT.println(gpgga);
-            ggaOut++;
-          }
-        }
-        line = "";
-      } else {
-        if (line.length() < 220) line += c;
-      }
+    if (nmeaLineLen < (NMEA_LINE_MAX - 1)) {
+      nmeaLineBuf[nmeaLineLen++] = c;
+    } else {
+      nmeaOverflow = true;
     }
   }
 
-  Serial.println("[autotest] --- RESULTADOS ---");
-  Serial.printf("[autotest] MAG init: %s\n", magOk ? "OK" : "FAIL");
-  Serial.printf("[autotest] MAG lecturas: %lu\n", (unsigned long)magReads);
-  Serial.printf("[autotest] GNSS GGA IN: %lu\n", (unsigned long)ggaIn);
-  Serial.printf("[autotest] GNSS FIX detectado: %s\n", gnssAnyFix ? "SI" : "NO");
-  Serial.printf("[autotest] GPGGA OUT (MAX3232): %lu\n", (unsigned long)ggaOut);
+  return false;
+}
 
-  bool pass = (magAnyOk && ggaIn > 0 && ggaOut > 0);
-  Serial.printf("[autotest] ESTADO: %s\n\n", pass ? "PASS" : "REVISAR CABLEADO/BAUD/PINES");
+bool resolveHeadingTrue(uint32_t nowMs, double& headingTrueOut) {
+  if (magOk && hasLastHeadingTrue && isfinite(lastHeadingTrue)) {
+    headingTrueOut = wrap360(lastHeadingTrue);
+    return true;
+  }
+
+  if (gnssSpeedValid && gnssSpeedMS > COG_HEADING_MIN_SPEED_MS && hasLastCog) {
+    if (nowMs - lastCogMs <= COG_MAX_AGE_MS) {
+      headingTrueOut = wrap360(lastCogDeg);
+      lastHeadingTrue = headingTrueOut;
+      hasLastHeadingTrue = true;
+      return true;
+    }
+  }
+
+  if (hasLastHeadingTrue && isfinite(lastHeadingTrue)) {
+    headingTrueOut = wrap360(lastHeadingTrue);
+    return true;
+  }
+
+  return false;
+}
+
+void applyOffsetFromAntennaToReference(double inLat, double inLon,
+                                       bool headingAvailable, double headingTrueDeg,
+                                       double& outLat, double& outLon) {
+  outLat = inLat;
+  outLon = inLon;
+
+  if (!headingAvailable) {
+    return;
+  }
+
+  if (fabs(offsetAlongHeadingMeters) > 0.0001) {
+    double bearing = headingTrueDeg;
+    double dist = offsetAlongHeadingMeters;
+    if (dist < 0.0) {
+      bearing = wrap360(bearing + 180.0);
+      dist = -dist;
+    }
+    destinationPoint(outLat, outLon, bearing, dist, outLat, outLon);
+  }
+
+  if (fabs(offsetLateralMeters) > 0.0001) {
+    const double bearing = wrap360(headingTrueDeg + (offsetLateralMeters >= 0.0 ? 90.0 : -90.0));
+    const double dist = fabs(offsetLateralMeters);
+    destinationPoint(outLat, outLon, bearing, dist, outLat, outLon);
+  }
+}
+
+bool computeUtcForOutput(uint32_t nowMs, char* utcOut, size_t utcOutSize) {
+  if (gnssUtcParsed) {
+    const uint32_t elapsedMs = nowMs - gnssUtcRxMs;
+    const uint32_t advancedCentis = gnssUtcCentis + (elapsedMs / 10u);
+    formatUtcFromCentis(advancedCentis, utcOut, utcOutSize);
+    return true;
+  }
+
+  if (gnssUtcRaw[0] != '\0') {
+    strncpy(utcOut, gnssUtcRaw, utcOutSize - 1);
+    utcOut[utcOutSize - 1] = '\0';
+    return true;
+  }
+
+  return false;
 }
 
 void updateStopState(uint32_t nowMs) {
-  if (isnan(gnssSpeedMS)) return;
+  if (!gnssSpeedValid) return;
 
   if (!isStopped) {
     if (gnssSpeedMS <= STOP_SPEED_MS_ENTER) {
@@ -435,42 +795,158 @@ void sendAt10Hz(uint32_t nowMs) {
   if (nowMs - lastOutMs < OUT_PERIOD_MS) return;
   lastOutMs = nowMs;
 
-  if (!gnssFix || gnssUtc.length() == 0) return;
+  if (!gnssFix) return;
 
-  double outLat, outLon;
-  const char* mode;
+  double outLat = NAN;
+  double outLon = NAN;
+  const char* mode = nullptr;
 
   if (isStopped && avgHas) {
     outLat = avgLat;
     outLon = avgLon;
     mode = "AVG15s";
-  } else if (hasCorrectedNow) {
-    outLat = correctedNowLat;
-    outLon = correctedNowLon;
+  } else if (hasOutputNow) {
+    outLat = outputNowLat;
+    outLon = outputNowLon;
     mode = "INST";
   } else {
     return;
   }
 
-  String gpgga = buildCorrectedGPGGA(gnssUtc, outLat, outLon, gnssFixQ, gnssSats, gnssAlt);
-  OUT.println(gpgga);
+  char utcOut[16];
+  if (!computeUtcForOutput(nowMs, utcOut, sizeof(utcOut))) return;
+
+  char gpgga[220];
+  if (!buildCorrectedGPGGA(gpgga, sizeof(gpgga), utcOut, outLat, outLon, gnssFixQ, gnssSats, gnssAlt)) return;
+
+  OUT.print(gpgga);
+  OUT.print("\r\n");
   outCount++;
+  autoTest.ggaOut++;
 
   if (nowMs - lastLogMs > 500) {
-    Serial.printf("OUT[%s] lat=%.8f lon=%.8f spd=%.3f stop=%s cnt=%lu\n",
-                  mode, outLat, outLon,
-                  isnan(gnssSpeedMS) ? -1.0 : gnssSpeedMS,
+    Serial.printf("OUT[%s] lat=%.8f lon=%.8f spd=%s%.3f stop=%s cnt=%lu badNMEA=%lu\n",
+                  mode,
+                  outLat,
+                  outLon,
+                  gnssSpeedValid ? "" : "invalid/",
+                  gnssSpeedValid ? gnssSpeedMS : -1.0,
                   isStopped ? "true" : "false",
-                  (unsigned long)outCount);
+                  static_cast<unsigned long>(outCount),
+                  static_cast<unsigned long>(malformedNmeaCount));
     Serial.println(gpgga);
     lastLogMs = nowMs;
   }
 }
 
+void updateAutoTest(uint32_t nowMs) {
+  if (!autoTest.active) return;
+  if (nowMs - autoTest.startMs < 10000) return;
+
+  autoTest.active = false;
+
+  Serial.println("[autotest] --- RESULTADOS (no bloqueante, 10s) ---");
+  Serial.printf("[autotest] MAG init: %s\n", magOk ? "OK" : "FAIL");
+  Serial.printf("[autotest] MAG lecturas: %lu\n", static_cast<unsigned long>(autoTest.magReads));
+  Serial.printf("[autotest] GNSS GGA IN: %lu\n", static_cast<unsigned long>(autoTest.ggaIn));
+  Serial.printf("[autotest] GNSS FIX detectado: %s\n", autoTest.gnssAnyFix ? "SI" : "NO");
+  Serial.printf("[autotest] GPGGA OUT (MAX3232): %lu\n", static_cast<unsigned long>(autoTest.ggaOut));
+
+  const bool pass = (autoTest.ggaIn > 0 && autoTest.ggaOut > 0);
+  Serial.printf("[autotest] ESTADO: %s\n\n", pass ? "PASS" : "REVISAR CABLEADO/BAUD/PINES");
+}
+
+void processNmeaSentence(const char* line, uint32_t nowMs) {
+  bool parsedSpeedValid = false;
+  double parsedSpeedMs = 0.0;
+  bool parsedCogValid = false;
+  double parsedCogDeg = 0.0;
+
+  bool vtgSpeedValid = false;
+  double vtgSpeedMs = 0.0;
+  bool vtgCogValid = false;
+  double vtgCogDeg = 0.0;
+  const bool isVtg = parseVTG(line, vtgSpeedValid, vtgSpeedMs, vtgCogValid, vtgCogDeg);
+
+  bool rmcSpeedValid = false;
+  double rmcSpeedMs = 0.0;
+  bool rmcCogValid = false;
+  double rmcCogDeg = 0.0;
+  const bool isRmc = parseRMC(line, rmcSpeedValid, rmcSpeedMs, rmcCogValid, rmcCogDeg);
+
+  if (isVtg) {
+    parsedSpeedValid = vtgSpeedValid;
+    parsedSpeedMs = vtgSpeedMs;
+    parsedCogValid = vtgCogValid;
+    parsedCogDeg = vtgCogDeg;
+  } else if (isRmc) {
+    parsedSpeedValid = rmcSpeedValid;
+    parsedSpeedMs = rmcSpeedMs;
+    parsedCogValid = rmcCogValid;
+    parsedCogDeg = rmcCogDeg;
+  }
+
+  if (isVtg || isRmc) {
+    if (parsedSpeedValid) {
+      gnssSpeedMS = parsedSpeedMs;
+      gnssSpeedValid = true;
+    } else {
+      gnssSpeedValid = false;
+    }
+
+    if (parsedCogValid) {
+      lastCogDeg = parsedCogDeg;
+      hasLastCog = true;
+      lastCogMs = nowMs;
+    }
+  }
+
+  GgaData gga;
+  if (!parseGGA(line, gga) || !gga.valid) {
+    return;
+  }
+
+  ggaCount++;
+  autoTest.ggaIn++;
+
+  gnssFixQ = gga.fixQ;
+  gnssFix = (gga.fixQ > 0);
+  gnssLat = gga.lat;
+  gnssLon = gga.lon;
+  gnssAlt = gga.alt;
+  gnssSats = gga.sats;
+
+  strncpy(gnssUtcRaw, gga.utc, sizeof(gnssUtcRaw) - 1);
+  gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
+  gnssUtcParsed = parseUtcToCentis(gnssUtcRaw, gnssUtcCentis);
+  gnssUtcRxMs = nowMs;
+
+  if (gnssFix) autoTest.gnssAnyFix = true;
+
+  if (!gnssFix) {
+    hasOutputNow = false;
+    return;
+  }
+
+  double headingTrue = NAN;
+  const bool headingAvailable = resolveHeadingTrue(nowMs, headingTrue);
+
+  double correctedLat = gnssLat;
+  double correctedLon = gnssLon;
+  applyOffsetFromAntennaToReference(gnssLat, gnssLon, headingAvailable, headingTrue, correctedLat, correctedLon);
+
+  outputNowLat = correctedLat;
+  outputNowLon = correctedLon;
+  hasOutputNow = true;
+
+  avgAdd(correctedLat, correctedLon, nowMs);
+  avgCompute15s(nowMs);
+}
+
 // ================== SETUP =============================
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(20);
 
   setupLeds();
 
@@ -479,97 +955,41 @@ void setup() {
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   magOk = initMagnetometerQMC();
+  magError = !magOk;
+
+  autoTest.active = true;
+  autoTest.startMs = millis();
 
   Serial.println();
   Serial.println("[boot] .ino unificado listo");
-  Serial.printf("[boot] GNSS IN  RX=%d TX=%d @%lu\n", GNSS_RX_PIN, GNSS_TX_PIN, (unsigned long)GNSS_BAUD);
-  Serial.printf("[boot] RS232 OUT RX=%d TX=%d @%lu (MAX3232)\n", OUT_RX_PIN, OUT_TX_PIN, (unsigned long)OUT_BAUD);
-  Serial.printf("[boot] I2C SDA=%d SCL=%d MAG=0x%02X init=%s\n", I2C_SDA_PIN, I2C_SCL_PIN, MAG_ADDR, magOk ? "OK":"FAIL");
-  Serial.printf("[boot] offset=%.2fm lateral=%s right=%s decl=%.2f\n",
-                offsetMeters, lateralOffset ? "true":"false", offsetToRight ? "true":"false", declinationDeg);
+  Serial.printf("[boot] GNSS IN  RX=%d TX=%d @%lu\n", GNSS_RX_PIN, GNSS_TX_PIN, static_cast<unsigned long>(GNSS_BAUD));
+  Serial.printf("[boot] RS232 OUT RX=%d TX=%d @%lu (MAX3232/Dynatest Embedded)\n",
+                OUT_RX_PIN, OUT_TX_PIN, static_cast<unsigned long>(OUT_BAUD));
+  Serial.printf("[boot] I2C SDA=%d SCL=%d MAG=0x%02X init=%s\n",
+                I2C_SDA_PIN, I2C_SCL_PIN, MAG_ADDR, magOk ? "OK" : "FAIL");
+  Serial.printf("[boot] offset along=%.2fm lateral=%.2fm decl=%.2f\n",
+                offsetAlongHeadingMeters, offsetLateralMeters, declinationDeg);
   Serial.printf("[boot] stop enter<=%.2f m/s exit>=%.2f m/s win=%lums out=%lums\n",
                 STOP_SPEED_MS_ENTER, STOP_SPEED_MS_EXIT,
-                (unsigned long)AVG_WINDOW_MS, (unsigned long)OUT_PERIOD_MS);
-
-  runAutoTest10s();
+                static_cast<unsigned long>(AVG_WINDOW_MS),
+                static_cast<unsigned long>(OUT_PERIOD_MS));
+  Serial.println("[boot] autotest no bloqueante activo durante los primeros 10s");
 }
 
 // ================== LOOP ==============================
 void loop() {
-  uint32_t now = millis();
+  const uint32_t now = millis();
 
-  // 1) Heading magnetómetro
-  float h;
-  if (magOk && readMagHeading(h)) {
-    magHeading = h;
+  ensureMagRecovery(now);
+  updateHeadingFromMag(now);
 
-    if (isnan(headingFiltered)) headingFiltered = h;
-    else {
-      float a = headingFiltered * DEG_TO_RAD;
-      float b = h * DEG_TO_RAD;
-      float sx = (1.0f - headingAlpha) * cosf(a) + headingAlpha * cosf(b);
-      float sy = (1.0f - headingAlpha) * sinf(a) + headingAlpha * sinf(b);
-      headingFiltered = atan2f(sy, sx) * 180.0f / PI;
-      if (headingFiltered < 0) headingFiltered += 360.0f;
-    }
-    pulseLed(LED_MAG, 2);
+  char line[NMEA_LINE_MAX];
+  while (nextNmeaLineFromGnss(line, sizeof(line))) {
+    processNmeaSentence(line, millis());
   }
 
-  // 2) Lectura GNSS (GGA + velocidad desde VTG/RMC)
-  while (GNSS.available()) {
-    char c = (char)GNSS.read();
-
-    if (c == '\n') {
-      nmeaLine.trim();
-
-      if (nmeaLine.length() > 0) {
-        double sp;
-        if (parseVTGSpeed(nmeaLine, sp) || parseRMCSpeed(nmeaLine, sp)) {
-          gnssSpeedMS = sp;
-        }
-
-        double lat, lon, alt;
-        int fixQ;
-        uint8_t sats;
-        String utc;
-
-        if (parseGGA(nmeaLine, lat, lon, alt, fixQ, sats, utc)) {
-          gnssFixQ = fixQ;
-          gnssFix  = (fixQ > 0);
-          gnssLat  = lat;
-          gnssLon  = lon;
-          gnssAlt  = alt;
-          gnssSats = sats;
-          gnssUtc  = utc;
-          ggaCount++;
-
-          setFixLeds(gnssFix);
-
-          if (gnssFix && !isnan(headingFiltered)) {
-            double headingTrue = wrap360((double)headingFiltered + declinationDeg);
-            double bearing = headingTrue;
-            if (lateralOffset) {
-              bearing = wrap360(headingTrue + (offsetToRight ? 90.0 : -90.0));
-            }
-
-            destinationPoint(gnssLat, gnssLon, bearing, offsetMeters, correctedNowLat, correctedNowLon);
-            hasCorrectedNow = true;
-
-            avgAdd(correctedNowLat, correctedNowLon, now);
-            avgCompute15s(now);
-          }
-        }
-      }
-
-      nmeaLine = "";
-    } else {
-      if (nmeaLine.length() < 220) nmeaLine += c;
-    }
-  }
-
-  // 3) Estado detenido/movimiento
   updateStopState(now);
-
-  // 4) Salida fija a 10Hz
   sendAt10Hz(now);
+  updateAutoTest(now);
+  updateLeds(now);
 }

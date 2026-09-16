@@ -12,7 +12,7 @@ Proporcionar al Dynatest FWD una posición GNSS mejorada mediante:
 - Promedio temporal de coordenadas durante la parada.
 - Presentación del estado GNSS mediante LEDs externos.
 
-No se implementará corrección por rumbo basada en trayectoria.
+La versión Arduino unificada implementa corrección por rumbo con offset configurable entre antena y punto de referencia del Dynatest.
 
 ## Arquitectura Hardware
 
@@ -39,16 +39,17 @@ Funciones:
 - Generación GGA
 - Control LEDs
 
-### Sensor de orientación (experimental)
+### Sensor de orientación
 
-- Adafruit BNO085/BNO086
+- QMC5883L
 - Interfaz I²C
 - Uso previsto: obtención de rumbo absoluto
 
 Estado actual:
 
-- Experimental
-- No se utilizará inicialmente para corregir coordenadas
+- Se usa heading magnético filtrado para corrección geométrica.
+- Si el heading magnético falla temporalmente, se puede usar COG de VTG/RMC cuando la velocidad es suficiente.
+- El QMC5883L no tiene tilt compensation completa; requiere calibración hard-iron/soft-iron.
 
 ### Comunicación Dynatest
 
@@ -111,13 +112,7 @@ Resultado:
 
 ### Coordenada enviada
 
-Inicialmente:
-
-- Posición media de la antena GNSS
-
-No se aplicará:
-
-- Corrección por trayectoria previa
+Se aplica offset desde la antena hacia el punto de referencia FWD. Para mástil delante del plato se configura offset longitudinal negativo (equivale a heading + 180°).
 
 ## Indicadores externos
 
