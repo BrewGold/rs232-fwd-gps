@@ -177,10 +177,39 @@ double wrap360(double v) {
 
 bool parseDoubleStrict(const char* s, double& out) {
   if (!s || s[0] == '\0') return false;
-  char* end = nullptr;
-  const double v = strtod(s, &end);
-  if (end == s || (end && end[0] != '\0') || !isfinite(v)) return false;
-  out = v;
+
+  size_t i = 0;
+  bool neg = false;
+  if (s[i] == '+' || s[i] == '-') {
+    neg = (s[i] == '-');
+    i++;
+  }
+
+  bool anyDigit = false;
+  double intPart = 0.0;
+  while (s[i] >= '0' && s[i] <= '9') {
+    anyDigit = true;
+    intPart = intPart * 10.0 + static_cast<double>(s[i] - '0');
+    i++;
+  }
+
+  double fracPart = 0.0;
+  double fracDiv = 1.0;
+  if (s[i] == '.') {
+    i++;
+    while (s[i] >= '0' && s[i] <= '9') {
+      anyDigit = true;
+      fracPart = fracPart * 10.0 + static_cast<double>(s[i] - '0');
+      fracDiv *= 10.0;
+      i++;
+    }
+  }
+
+  if (!anyDigit || s[i] != '\0') return false;
+
+  double value = intPart + (fracPart / fracDiv);
+  if (neg) value = -value;
+  out = value;
   return true;
 }
 
@@ -211,6 +240,29 @@ uint8_t nmeaChecksum(const char* sentenceNoDollarNoStar) {
     cs ^= static_cast<uint8_t>(sentenceNoDollarNoStar[i]);
   }
   return cs;
+}
+
+int hexDigitToInt(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+  if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+  return -1;
+}
+
+bool verifyNmeaChecksum(const char* line) {
+  if (!line || line[0] != '$') return false;
+  const char* star = strchr(line, '*');
+  if (!star) return false;
+  if (star[1] == '\0' || star[2] == '\0') return false;
+
+  const int high = hexDigitToInt(star[1]);
+  const int low = hexDigitToInt(star[2]);
+  if (high < 0 || low < 0) return false;
+
+  uint8_t calc = 0;
+  for (const char* p = line + 1; p < star; ++p) calc ^= static_cast<uint8_t>(*p);
+  const uint8_t expected = static_cast<uint8_t>((high << 4) | low);
+  return calc == expected;
 }
 
 bool nmeaToDecimalDegrees(const char* v, const char* hemi, bool isLat, double& outDeg) {
@@ -623,7 +675,7 @@ bool parseVTG(const char* line, bool& speedValid, double& speedMs, bool& cogVali
   }
 
   double cog = 0.0;
-  if (parseDoubleStrict(fields[1], cog)) {
+  if (fields[2] && fields[2][0] == 'T' && fields[2][1] == '\0' && parseDoubleStrict(fields[1], cog)) {
     cogDeg = wrap360(cog);
     cogValid = true;
   }
@@ -646,6 +698,7 @@ bool parseRMC(const char* line, bool& speedValid, double& speedMs, bool& cogVali
   char* fields[20];
   const int n = splitCsvInPlace(work, fields, 20);
   if (n < 9) return true;
+  if (!(fields[2] && fields[2][0] == 'A' && fields[2][1] == '\0')) return true;
 
   double knots = 0.0;
   if (parseDoubleStrict(fields[7], knots)) {
@@ -663,6 +716,8 @@ bool parseRMC(const char* line, bool& speedValid, double& speedMs, bool& cogVali
 }
 
 bool nextNmeaLineFromGnss(char* outLine, size_t outSize) {
+  if (!outLine || outSize < 2) return false;
+
   while (GNSS.available()) {
     const char c = static_cast<char>(GNSS.read());
 
@@ -857,6 +912,11 @@ void updateAutoTest(uint32_t nowMs) {
 }
 
 void processNmeaSentence(const char* line, uint32_t nowMs) {
+  if (!line || line[0] != '$' || !verifyNmeaChecksum(line)) {
+    malformedNmeaCount++;
+    return;
+  }
+
   bool parsedSpeedValid = false;
   double parsedSpeedMs = 0.0;
   bool parsedCogValid = false;
@@ -919,7 +979,7 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
   strncpy(gnssUtcRaw, gga.utc, sizeof(gnssUtcRaw) - 1);
   gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
   gnssUtcParsed = parseUtcToCentis(gnssUtcRaw, gnssUtcCentis);
-  gnssUtcRxMs = nowMs;
+  if (gnssUtcParsed) gnssUtcRxMs = nowMs;
 
   if (gnssFix) autoTest.gnssAnyFix = true;
 
