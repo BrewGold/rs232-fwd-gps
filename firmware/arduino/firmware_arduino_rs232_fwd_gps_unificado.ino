@@ -67,6 +67,7 @@ static const uint32_t OUT_PERIOD_MS = 100;       // 10Hz
 // --- Fallback heading por COG ---
 static const double COG_HEADING_MIN_SPEED_MS = 0.80;
 static const uint32_t COG_MAX_AGE_MS = 2000;
+static const uint32_t HEADING_FALLBACK_MAX_AGE_MS = 5000;
 
 // --- Robustez NMEA ---
 static const size_t NMEA_LINE_MAX = 224;
@@ -774,7 +775,8 @@ bool resolveHeadingTrue(uint32_t nowMs, double& headingTrueOut) {
     }
   }
 
-  if (hasLastHeadingTrue && isfinite(lastHeadingTrue)) {
+  if (hasLastHeadingTrue && isfinite(lastHeadingTrue) &&
+      (nowMs - lastHeadingTrueMs <= HEADING_FALLBACK_MAX_AGE_MS)) {
     headingTrueOut = wrap360(lastHeadingTrue);
     return true;
   }
@@ -988,6 +990,9 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
   gnssUtcRaw[sizeof(gnssUtcRaw) - 1] = '\0';
   gnssUtcParsed = parseUtcToCentis(gnssUtcRaw, gnssUtcCentis);
   if (gnssUtcParsed) {
+    gnssUtcAdvanceMs = nowMs;
+  } else {
+    gnssUtcCentis = 0;
     gnssUtcAdvanceMs = nowMs;
   }
 
