@@ -659,11 +659,6 @@ bool parseGGA(const char* line, GgaData& out) {
   const int n = splitCsvInPlace(work, fields, 20);
   if (n < 10) return false;
 
-  double lat = NAN;
-  double lon = NAN;
-  if (!nmeaToDecimalDegrees(fields[2], fields[3], true, lat)) return false;
-  if (!nmeaToDecimalDegrees(fields[4], fields[5], false, lon)) return false;
-
   uint32_t fixQu = 0;
   uint32_t satsu = 0;
   double alt = 0.0;
@@ -671,6 +666,13 @@ bool parseGGA(const char* line, GgaData& out) {
   if (!parseUIntStrict(fields[6], fixQu)) fixQu = 0;
   if (!parseUIntStrict(fields[7], satsu)) satsu = 0;
   if (!parseDoubleStrict(fields[9], alt)) alt = isfinite(gnssAlt) ? gnssAlt : 0.0;
+
+  double lat = NAN;
+  double lon = NAN;
+  if (fixQu > 0) {
+    if (!nmeaToDecimalDegrees(fields[2], fields[3], true, lat)) return false;
+    if (!nmeaToDecimalDegrees(fields[4], fields[5], false, lon)) return false;
+  }
 
   strncpy(out.utc, fields[1] ? fields[1] : "", sizeof(out.utc) - 1);
   out.utc[sizeof(out.utc) - 1] = '\0';
@@ -877,7 +879,6 @@ void updateStopState(uint32_t nowMs) {
   if (!speedFresh) {
     stopCandidateSince = 0;
     moveCandidateSince = 0;
-    isStopped = false;
     return;
   }
 
@@ -1031,10 +1032,12 @@ void processNmeaSentence(const char* line, uint32_t nowMs) {
 
   gnssFixQ = gga.fixQ;
   gnssFix = (gga.fixQ > 0);
-  gnssLat = gga.lat;
-  gnssLon = gga.lon;
-  gnssAlt = gga.alt;
   gnssSats = gga.sats;
+  if (gnssFix) {
+    gnssLat = gga.lat;
+    gnssLon = gga.lon;
+    gnssAlt = gga.alt;
+  }
 
   char utcCandidate[16];
   strncpy(utcCandidate, gga.utc, sizeof(utcCandidate) - 1);
