@@ -448,7 +448,7 @@ bool parseGGA(const char *line, GnssState &outState, uint32_t nowMs) {
     return false;
   }
 
-  if (fixQuality < 0L || satellites < 0L) {
+  if (fixQuality < 0L || fixQuality > 8L || satellites < 0L || satellites > 99L) {
     return false;
   }
 
