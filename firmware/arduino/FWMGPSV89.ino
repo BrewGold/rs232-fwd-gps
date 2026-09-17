@@ -446,21 +446,13 @@ bool parseGGA(const char *line, GnssState &outState, uint32_t nowMs) {
     return false;
   }
 
-  if (fixQuality < 1L || satellites < 0L) {
+  if (fixQuality < 0L || satellites < 0L) {
     return false;
   }
 
-  double lat = NAN;
-  double lon = NAN;
   double alt = NAN;
   double hdop = NAN;
   double geoidSeparation = NAN;
-
-  if (!parseNmeaCoordinate(fields[2], fields[3], true, lat) ||
-      !parseNmeaCoordinate(fields[4], fields[5], false, lon) ||
-      !parseStrictDouble(fields[9], alt)) {
-    return false;
-  }
 
   if (fields[8][0] != '\0' && !parseStrictDouble(fields[8], hdop)) {
     return false;
@@ -470,7 +462,29 @@ bool parseGGA(const char *line, GnssState &outState, uint32_t nowMs) {
     return false;
   }
 
-  outState.valid = true;
+  if (fixQuality < 1L) {
+    outState.valid = false;
+    outState.lat = NAN;
+    outState.lon = NAN;
+    outState.alt = NAN;
+    outState.hdop = hdop;
+    outState.geoidSeparation = geoidSeparation;
+    outState.fixQuality = 0U;
+    outState.satellites = static_cast<uint8_t>(satellites);
+    outState.lastGgaMs = nowMs;
+    copyCString(outState.utc, sizeof(outState.utc), utc);
+    return true;
+  }
+
+  double lat = NAN;
+  double lon = NAN;
+  if (!parseNmeaCoordinate(fields[2], fields[3], true, lat) ||
+      !parseNmeaCoordinate(fields[4], fields[5], false, lon) ||
+      !parseStrictDouble(fields[9], alt)) {
+    return false;
+  }
+
+  outState.valid = (fixQuality >= 1L);
   outState.lat = lat;
   outState.lon = lon;
   outState.alt = alt;
@@ -1079,10 +1093,10 @@ void formatNmeaCoordinate(double decimalDegrees, bool isLatitude, char *valueOut
 
   if (isLatitude) {
     hemisphereOut = (decimalDegrees >= 0.0) ? 'N' : 'S';
-    snprintf(valueOut, valueSize, "%02u%07.4f", wholeDegrees, minutes);
+    snprintf(valueOut, valueSize, "%02u%08.5f", wholeDegrees, minutes);
   } else {
     hemisphereOut = (decimalDegrees >= 0.0) ? 'E' : 'W';
-    snprintf(valueOut, valueSize, "%03u%07.4f", wholeDegrees, minutes);
+    snprintf(valueOut, valueSize, "%03u%08.5f", wholeDegrees, minutes);
   }
 }
 
@@ -1122,7 +1136,7 @@ void transmitDynatest(uint32_t nowMs) {
     }
     outputLat = lockedState.correctedLat;
     outputLon = lockedState.correctedLon;
-    outputAlt = lockedState.correctedAlt;
+    outputAlt = std::isfinite(lockedState.correctedAlt) ? lockedState.correctedAlt : gnssState.alt;
   } else {
     applyAntennaOffset(gnssState.lat, gnssState.lon, currentYaw, outputLat, outputLon);
   }
