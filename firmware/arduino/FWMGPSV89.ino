@@ -723,7 +723,10 @@ void updateMotionState(uint32_t nowMs) {
       break;
 
     case STOP_CONFIRM:
-      if (aboveExit) {
+      if (!speedFresh) {
+        stopCandidateSinceMs = 0;
+        setMotionState(MOVING);
+      } else if (aboveExit) {
         stopCandidateSinceMs = 0;
         setMotionState(MOVING);
       } else if ((nowMs - stopCandidateSinceMs) >= STOP_CONFIRM_DURATION_MS) {
@@ -1115,7 +1118,7 @@ void transmitDynatest(uint32_t nowMs) {
 
 void updateLeds(uint32_t nowMs) {
   LedPattern redPattern = LED_PATTERN_OFF;
-  if (gnssState.valid) {
+  if (hasFreshGnssFix(nowMs)) {
     if (pppState == PPP_ESTABLE) {
       redPattern = LED_PATTERN_SOLID;
     } else if (pppState == PPP_CONVERGING) {

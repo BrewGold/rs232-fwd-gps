@@ -75,7 +75,7 @@ PPPNAVA COM2 0
 - **COM3 / TX3**: `GGA`, `RMC` y `#PPPNAVA` para alimentar al ESP32-S3.
 - **USB2 / COM2**: si se usa como monitor de retorno, debe quedar limpio de NMEA/PPP propios del UM980.
 - **USB debug del ESP32-S3**: cambios de estado (`MOVING`, `STOP_CONFIRM`, `AVERAGING`, `LOCKED`) y diagnóstico PPP limitado.
-- **Dynatest / salida RS232**: exactamente una trama `$GPGGA,...*CS` por período de `100 ms` mientras el GNSS esté fresco.
+- **Dynatest / salida RS232**: salida objetivo de una trama `$GPGGA,...*CS` cada `100 ms` mientras el GNSS esté fresco.
 
 ## Validación realizada en esta tarea
 
