@@ -21,6 +21,8 @@ Sketch recomendado para esta incidencia:
 - `Serial2 RX = GPIO18` (opcional)
 - `38400 8N1`
 
+> Esta versión fija la salida para Dynatest en `38400`; si el receptor o pruebas previas estaban en `115200`, hay que reconfigurarlos antes de validar.
+
 ### BNO085
 - `SDA = GPIO8`
 - `SCL = GPIO9`

@@ -126,6 +126,7 @@ void appendAverageSampleIfNeeded();
 void finishAveraging();
 void clearAverageSamples();
 void clearLockedState();
+void linearizeSamples(const double *source, double *destination, size_t count);
 double trimmedMean(const double *values, size_t count);
 double circularMeanDegrees(const double *values, size_t count);
 double haversineMeters(double lat1Deg, double lon1Deg, double lat2Deg, double lon2Deg);
@@ -800,10 +801,20 @@ void appendAverageSampleIfNeeded() {
 }
 
 void finishAveraging() {
-  const double meanLat = trimmedMean(latSamples, sampleCount);
-  const double meanLon = trimmedMean(lonSamples, sampleCount);
-  const double meanAlt = trimmedMean(altSamples, sampleCount);
-  const double meanYaw = circularMeanDegrees(yawSamples, sampleCount);
+  double orderedLat[MAX_SAMPLES];
+  double orderedLon[MAX_SAMPLES];
+  double orderedAlt[MAX_SAMPLES];
+  double orderedYaw[MAX_SAMPLES];
+
+  linearizeSamples(latSamples, orderedLat, sampleCount);
+  linearizeSamples(lonSamples, orderedLon, sampleCount);
+  linearizeSamples(altSamples, orderedAlt, sampleCount);
+  linearizeSamples(yawSamples, orderedYaw, sampleCount);
+
+  const double meanLat = trimmedMean(orderedLat, sampleCount);
+  const double meanLon = trimmedMean(orderedLon, sampleCount);
+  const double meanAlt = trimmedMean(orderedAlt, sampleCount);
+  const double meanYaw = circularMeanDegrees(orderedYaw, sampleCount);
 
   if (!std::isfinite(meanLat) || !std::isfinite(meanLon) || !std::isfinite(meanAlt)) {
     Serial.println(F("[avg] medias inválidas; reiniciando ventana"));
@@ -845,6 +856,21 @@ void clearAverageSamples() {
 
 void clearLockedState() {
   initializeLockedState();
+}
+
+void linearizeSamples(const double *source, double *destination, size_t count) {
+  if (count == 0U) {
+    return;
+  }
+
+  size_t startIndex = 0U;
+  if (count >= MAX_SAMPLES) {
+    startIndex = sampleWriteIndex;
+  }
+
+  for (size_t i = 0; i < count; ++i) {
+    destination[i] = source[(startIndex + i) % MAX_SAMPLES];
+  }
 }
 
 double trimmedMean(const double *values, size_t count) {
