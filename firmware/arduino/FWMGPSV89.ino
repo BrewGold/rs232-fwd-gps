@@ -536,7 +536,7 @@ bool parseRMC(const char *line, GnssState &state, uint32_t nowMs) {
 }
 
 void parsePPPNAV(const char *line, uint32_t nowMs) {
-  if (strncmp(line, "#PPPNAVA", 8) != 0) {
+  if ((strncmp(line, "#PPPNAVA,", 9) != 0) && (strcmp(line, "#PPPNAVA") != 0)) {
     return;
   }
 
@@ -1031,7 +1031,7 @@ uint8_t deriveOutputFixQuality() {
 }
 
 bool buildOutputGga(char *buffer, size_t bufferSize, double lat, double lon, double alt, uint8_t fixQuality, uint8_t satellites, const char *utc, double hdop, double geoidSeparation) {
-  if (!std::isfinite(lat) || !std::isfinite(lon) || !std::isfinite(alt) || utc == nullptr || utc[0] == '\0') {
+  if (!std::isfinite(lat) || !std::isfinite(lon) || utc == nullptr || utc[0] == '\0') {
     return false;
   }
 
@@ -1052,7 +1052,11 @@ bool buildOutputGga(char *buffer, size_t bufferSize, double lat, double lon, dou
     hdopValue[0] = '\0';
   }
 
-  snprintf(altValue, sizeof(altValue), "%.2f", alt);
+  if (std::isfinite(alt)) {
+    snprintf(altValue, sizeof(altValue), "%.2f", alt);
+  } else {
+    altValue[0] = '\0';
+  }
 
   if (std::isfinite(geoidSeparation)) {
     snprintf(geoidValue, sizeof(geoidValue), "%.2f", geoidSeparation);
