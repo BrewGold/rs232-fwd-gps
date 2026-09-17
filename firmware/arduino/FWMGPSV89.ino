@@ -714,8 +714,10 @@ void copyCString(char *destination, size_t destinationSize, const char *source) 
     return;
   }
 
-  strncpy(destination, source, destinationSize - 1U);
-  destination[destinationSize - 1U] = '\0';
+  const size_t sourceLength = strlen(source);
+  const size_t copyLength = (sourceLength < (destinationSize - 1U)) ? sourceLength : (destinationSize - 1U);
+  memcpy(destination, source, copyLength);
+  destination[copyLength] = '\0';
 }
 
 bool hasFreshGnssFix(uint32_t nowMs) {
@@ -1112,34 +1114,6 @@ void transmitDynatest(uint32_t nowMs) {
   if (!outputStarted) {
     outputStarted = true;
     lastOutputMs = nowMs;
-    if (hasFreshGnssFix(nowMs)) {
-      double outputLat = gnssState.lat;
-      double outputLon = gnssState.lon;
-      double outputAlt = gnssState.alt;
-
-      if (motionState == LOCKED) {
-        if (!lockedState.valid) {
-          return;
-        }
-        outputLat = lockedState.correctedLat;
-        outputLon = lockedState.correctedLon;
-        outputAlt = std::isfinite(lockedState.correctedAlt) ? lockedState.correctedAlt : gnssState.alt;
-      } else {
-        applyAntennaOffset(gnssState.lat, gnssState.lon, currentYaw, outputLat, outputLon);
-      }
-
-      char ggaSentence[160];
-      if (buildOutputGga(
-              ggaSentence, sizeof(ggaSentence),
-              outputLat, outputLon, outputAlt,
-              deriveOutputFixQuality(),
-              gnssState.satellites,
-              gnssState.utc,
-              gnssState.hdop,
-              gnssState.geoidSeparation)) {
-        Dynatest.println(ggaSentence);
-      }
-    }
     return;
   }
 
