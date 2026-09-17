@@ -130,7 +130,7 @@ void linearizeSamples(const double *source, double *destination, size_t count);
 double trimmedMean(const double *values, size_t count);
 double circularMeanDegrees(const double *values, size_t count);
 double haversineMeters(double lat1Deg, double lon1Deg, double lat2Deg, double lon2Deg);
-bool detectLockedDrift();
+bool detectLockedDrift(uint32_t nowMs);
 void applyAntennaOffset(double latIn, double lonIn, double yawDeg, double &latOut, double &lonOut);
 void destinationPoint(double latDeg, double lonDeg, double bearingDeg, double distanceMeters, double &latOutDeg, double &lonOutDeg);
 double normalizeDegrees(double degrees);
@@ -738,7 +738,7 @@ void updateMotionState(uint32_t nowMs) {
       break;
 
     case STOP_CONFIRM:
-      if (!speedFresh) {
+      if (!speedFresh || !hasFreshGnssFix(nowMs)) {
         stopCandidateSinceMs = 0;
         setMotionState(MOVING);
       } else if (aboveExit) {
@@ -750,7 +750,7 @@ void updateMotionState(uint32_t nowMs) {
       break;
 
     case AVERAGING:
-      if (aboveExit) {
+      if (!speedFresh || !hasFreshGnssFix(nowMs) || aboveExit) {
         clearAverageSamples();
         clearLockedState();
         setMotionState(MOVING);
@@ -763,7 +763,7 @@ void updateMotionState(uint32_t nowMs) {
       break;
 
     case LOCKED:
-      if (aboveExit || detectLockedDrift()) {
+      if (!hasFreshGnssFix(nowMs) || aboveExit || detectLockedDrift(nowMs)) {
         clearAverageSamples();
         clearLockedState();
         setMotionState(MOVING);
@@ -964,8 +964,8 @@ double haversineMeters(double lat1Deg, double lon1Deg, double lat2Deg, double lo
   return EarthRadiusMeters * c;
 }
 
-bool detectLockedDrift() {
-  if (!lockedState.valid || !gnssState.valid) {
+bool detectLockedDrift(uint32_t nowMs) {
+  if (!lockedState.valid || !hasFreshGnssFix(nowMs)) {
     return false;
   }
 
@@ -1088,8 +1088,14 @@ bool buildOutputGga(char *buffer, size_t bufferSize, double lat, double lon, dou
 
 void formatNmeaCoordinate(double decimalDegrees, bool isLatitude, char *valueOut, size_t valueSize, char &hemisphereOut) {
   const double absoluteDegrees = fabs(decimalDegrees);
-  const unsigned wholeDegrees = static_cast<unsigned>(absoluteDegrees);
-  const double minutes = (absoluteDegrees - static_cast<double>(wholeDegrees)) * 60.0;
+  unsigned wholeDegrees = static_cast<unsigned>(absoluteDegrees);
+  double minutes = (absoluteDegrees - static_cast<double>(wholeDegrees)) * 60.0;
+  minutes = round(minutes * 100000.0) / 100000.0;
+
+  if (minutes >= 60.0) {
+    minutes = 0.0;
+    ++wholeDegrees;
+  }
 
   if (isLatitude) {
     hemisphereOut = (decimalDegrees >= 0.0) ? 'N' : 'S';
@@ -1110,50 +1116,45 @@ uint8_t calculateNmeaChecksum(const char *payload) {
 
 void transmitDynatest(uint32_t nowMs) {
   if (lastOutputMs == 0U) {
-    lastOutputMs = nowMs;
-    return;
+    lastOutputMs = nowMs - GGA_OUTPUT_PERIOD_MS;
   }
 
-  if ((nowMs - lastOutputMs) < GGA_OUTPUT_PERIOD_MS) {
-    return;
-  }
-  lastOutputMs += GGA_OUTPUT_PERIOD_MS;
-  if ((nowMs - lastOutputMs) >= GGA_OUTPUT_PERIOD_MS) {
-    lastOutputMs = nowMs;
-  }
+  while ((nowMs - lastOutputMs) >= GGA_OUTPUT_PERIOD_MS) {
+    lastOutputMs += GGA_OUTPUT_PERIOD_MS;
 
-  if (!hasFreshGnssFix(nowMs)) {
-    return;
-  }
-
-  double outputLat = gnssState.lat;
-  double outputLon = gnssState.lon;
-  double outputAlt = gnssState.alt;
-
-  if (motionState == LOCKED) {
-    if (!lockedState.valid) {
+    if (!hasFreshGnssFix(nowMs)) {
       return;
     }
-    outputLat = lockedState.correctedLat;
-    outputLon = lockedState.correctedLon;
-    outputAlt = std::isfinite(lockedState.correctedAlt) ? lockedState.correctedAlt : gnssState.alt;
-  } else {
-    applyAntennaOffset(gnssState.lat, gnssState.lon, currentYaw, outputLat, outputLon);
-  }
 
-  char ggaSentence[160];
-  if (!buildOutputGga(
-          ggaSentence, sizeof(ggaSentence),
-          outputLat, outputLon, outputAlt,
-          deriveOutputFixQuality(),
-          gnssState.satellites,
-          gnssState.utc,
-          gnssState.hdop,
-          gnssState.geoidSeparation)) {
-    return;
-  }
+    double outputLat = gnssState.lat;
+    double outputLon = gnssState.lon;
+    double outputAlt = gnssState.alt;
 
-  Dynatest.println(ggaSentence);
+    if (motionState == LOCKED) {
+      if (!lockedState.valid) {
+        return;
+      }
+      outputLat = lockedState.correctedLat;
+      outputLon = lockedState.correctedLon;
+      outputAlt = std::isfinite(lockedState.correctedAlt) ? lockedState.correctedAlt : gnssState.alt;
+    } else {
+      applyAntennaOffset(gnssState.lat, gnssState.lon, currentYaw, outputLat, outputLon);
+    }
+
+    char ggaSentence[160];
+    if (!buildOutputGga(
+            ggaSentence, sizeof(ggaSentence),
+            outputLat, outputLon, outputAlt,
+            deriveOutputFixQuality(),
+            gnssState.satellites,
+            gnssState.utc,
+            gnssState.hdop,
+            gnssState.geoidSeparation)) {
+      return;
+    }
+
+    Dynatest.println(ggaSentence);
+  }
 }
 
 void updateLeds(uint32_t nowMs) {
