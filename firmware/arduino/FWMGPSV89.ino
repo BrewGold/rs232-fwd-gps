@@ -122,8 +122,9 @@ bool hasFreshSpeed(uint32_t nowMs);
 void updateMotionState(uint32_t nowMs);
 void setMotionState(MotionState newState);
 void startAveraging(uint32_t nowMs);
-void appendAverageSampleIfNeeded();
+void appendAverageSampleIfNeeded(uint32_t nowMs);
 void finishAveraging();
+void restartAveragingWindow(uint32_t nowMs);
 void clearAverageSamples();
 void clearLockedState();
 void linearizeSamples(const double *source, double *destination, size_t count);
@@ -180,6 +181,7 @@ uint32_t stopCandidateSinceMs = 0;
 uint32_t lastSampledGgaMs = 0;
 
 uint32_t lastOutputMs = 0;
+bool outputStarted = false;
 uint32_t lastDebugLogMs = 0;
 uint32_t lastUnknownPppLogMs = 0;
 
@@ -543,13 +545,13 @@ void parsePPPNAV(const char *line, uint32_t nowMs) {
     return;
   }
 
-  if ((strstr(line, "PPP_FIXED") != nullptr) || (strstr(line, "PPP_ESTABLE") != nullptr)) {
-    pppState = PPP_ESTABLE;
+  if (strstr(line, "SINGLE") != nullptr) {
+    pppState = SIN_PPP;
     return;
   }
 
-  if (strstr(line, "SINGLE") != nullptr) {
-    pppState = SIN_PPP;
+  if ((strstr(line, "PPP_FIXED") != nullptr) || (strstr(line, "PPP_ESTABLE") != nullptr)) {
+    pppState = PPP_ESTABLE;
     return;
   }
 
@@ -755,7 +757,7 @@ void updateMotionState(uint32_t nowMs) {
         clearLockedState();
         setMotionState(MOVING);
       } else {
-        appendAverageSampleIfNeeded();
+        appendAverageSampleIfNeeded(nowMs);
         if ((nowMs - averagingStartedMs) >= AVERAGING_DURATION_MS) {
           finishAveraging();
         }
@@ -796,8 +798,8 @@ void startAveraging(uint32_t nowMs) {
   setMotionState(AVERAGING);
 }
 
-void appendAverageSampleIfNeeded() {
-  if (!gnssState.valid || gnssState.lastGgaMs == 0 || gnssState.lastGgaMs == lastSampledGgaMs) {
+void appendAverageSampleIfNeeded(uint32_t nowMs) {
+  if (!hasFreshGnssFix(nowMs) || gnssState.lastGgaMs == 0 || gnssState.lastGgaMs == lastSampledGgaMs) {
     return;
   }
 
@@ -832,8 +834,7 @@ void finishAveraging() {
 
   if (!std::isfinite(meanLat) || !std::isfinite(meanLon) || !std::isfinite(meanAlt)) {
     Serial.println(F("[avg] medias inválidas; reiniciando ventana"));
-    averagingStartedMs = millis();
-    clearAverageSamples();
+    restartAveragingWindow(millis());
     return;
   }
 
@@ -853,12 +854,16 @@ void finishAveraging() {
   lockedState.valid = std::isfinite(lockedState.correctedLat) && std::isfinite(lockedState.correctedLon);
   if (!lockedState.valid) {
     Serial.println(F("[avg] lock inválido; reiniciando ventana"));
-    averagingStartedMs = millis();
-    clearAverageSamples();
+    restartAveragingWindow(millis());
     return;
   }
 
   setMotionState(LOCKED);
+}
+
+void restartAveragingWindow(uint32_t nowMs) {
+  clearAverageSamples();
+  averagingStartedMs = nowMs;
 }
 
 void clearAverageSamples() {
@@ -1020,18 +1025,7 @@ double normalizeDegrees(double degreesValue) {
 }
 
 uint8_t deriveOutputFixQuality() {
-  uint8_t derived = gnssState.fixQuality;
-  if (derived == 0U && gnssState.valid) {
-    derived = 1U;
-  }
-
-  if (pppState == PPP_ESTABLE && derived < 4U) {
-    derived = 4U;
-  } else if (pppState == PPP_CONVERGING && derived < 2U) {
-    derived = 2U;
-  }
-
-  return derived;
+  return gnssState.fixQuality;
 }
 
 bool buildOutputGga(char *buffer, size_t bufferSize, double lat, double lon, double alt, uint8_t fixQuality, uint8_t satellites, const char *utc, double hdop, double geoidSeparation) {
@@ -1115,8 +1109,38 @@ uint8_t calculateNmeaChecksum(const char *payload) {
 }
 
 void transmitDynatest(uint32_t nowMs) {
-  if (lastOutputMs == 0U) {
-    lastOutputMs = nowMs - GGA_OUTPUT_PERIOD_MS;
+  if (!outputStarted) {
+    outputStarted = true;
+    lastOutputMs = nowMs;
+    if (hasFreshGnssFix(nowMs)) {
+      double outputLat = gnssState.lat;
+      double outputLon = gnssState.lon;
+      double outputAlt = gnssState.alt;
+
+      if (motionState == LOCKED) {
+        if (!lockedState.valid) {
+          return;
+        }
+        outputLat = lockedState.correctedLat;
+        outputLon = lockedState.correctedLon;
+        outputAlt = std::isfinite(lockedState.correctedAlt) ? lockedState.correctedAlt : gnssState.alt;
+      } else {
+        applyAntennaOffset(gnssState.lat, gnssState.lon, currentYaw, outputLat, outputLon);
+      }
+
+      char ggaSentence[160];
+      if (buildOutputGga(
+              ggaSentence, sizeof(ggaSentence),
+              outputLat, outputLon, outputAlt,
+              deriveOutputFixQuality(),
+              gnssState.satellites,
+              gnssState.utc,
+              gnssState.hdop,
+              gnssState.geoidSeparation)) {
+        Dynatest.println(ggaSentence);
+      }
+    }
+    return;
   }
 
   while ((nowMs - lastOutputMs) >= GGA_OUTPUT_PERIOD_MS) {
