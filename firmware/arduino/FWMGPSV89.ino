@@ -516,6 +516,9 @@ bool parseRMC(const char *line, GnssState &state, uint32_t nowMs) {
   }
 
   if (fields[2][0] != 'A' || fields[2][1] != '\0') {
+    state.speedMs = NAN;
+    state.cogDeg = NAN;
+    state.lastSpeedMs = nowMs;
     return false;
   }
 
@@ -1121,12 +1124,13 @@ void transmitDynatest(uint32_t nowMs) {
     return;
   }
 
+  if (!hasFreshGnssFix(nowMs)) {
+    lastOutputMs = nowMs;
+    return;
+  }
+
   while ((nowMs - lastOutputMs) >= GGA_OUTPUT_PERIOD_MS) {
     lastOutputMs += GGA_OUTPUT_PERIOD_MS;
-
-    if (!hasFreshGnssFix(nowMs)) {
-      return;
-    }
 
     double outputLat = gnssState.lat;
     double outputLon = gnssState.lon;
