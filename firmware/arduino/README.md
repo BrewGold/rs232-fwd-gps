@@ -1,117 +1,87 @@
-# Firmware Arduino (versión `.ino` unificada)
+# Firmware Arduino
 
-Archivo principal:
+Sketch recomendado para esta incidencia:
 
-- `rs232_fwd_gps_unificado.ino`
+- `FWMGPSV89.ino`
 
-Este sketch integra en un solo archivo:
+## Librerías necesarias
 
-1. Lectura GNSS (UM980) por UART de entrada.
-2. Lectura de heading desde magnetómetro I2C (QMC5883L).
-3. Cálculo de coordenada corregida con offset.
-4. Generación y envío de trama **`$GPGGA`** (GPSGGA) por UART de salida hacia **MAX3232**.
-5. Logs por USB (`Serial`) y LEDs de estado.
-6. Autotest inicial de 10 segundos.
+- `Adafruit BNO08x`
+- dependencias transitivas de la librería (`Adafruit BusIO`, `Adafruit Unified Sensor`)
 
----
+## Cableado
 
-## 1) Mapa de pines (actual)
+### UM980 → ESP32-S3
+- `Serial1 RX = GPIO44` desde `TX3 / COM3` del UM980
+- `Serial1 TX = GPIO43` hacia `RX3 / COM3` del UM980 (opcional)
+- `115200 8N1`
 
-### UART entrada GNSS (UM980)
-- `GNSS_RX_PIN = 44` → ESP32 recibe desde TX3 de UM980
-- `GNSS_TX_PIN = 43` → ESP32 transmite hacia RX3 de UM980 (opcional)
-- `GNSS_BAUD = 115200`
+### ESP32-S3 → Dynatest / MAX3232
+- `Serial2 TX = GPIO17`
+- `Serial2 RX = GPIO18` (opcional)
+- `38400 8N1`
 
-### UART salida a MAX3232
-- `OUT_TX_PIN = 17` → ESP32 TX hacia RX del MAX3232
-- `OUT_RX_PIN = 18` → ESP32 RX desde TX del MAX3232 (opcional)
-- `OUT_BAUD = 115200` (ajustar según receptor final)
+> Esta versión fija la salida para Dynatest en `38400`; si el receptor o pruebas previas estaban en `115200`, hay que reconfigurarlos antes de validar.
 
-### I2C magnetómetro
-- `I2C_SDA_PIN = 8`
-- `I2C_SCL_PIN = 9`
-- `MAG_ADDR = 0x0D` (QMC5883L típico)
+### BNO085
+- `SDA = GPIO8`
+- `SCL = GPIO9`
+- dirección I2C por defecto: `0x4A`
 
-### LEDs (ajustables según placa)
-- `LED_GNSS = 2` (fix)
-- `LED_MAG = 4` (pulso por lectura de magnetómetro)
-- `LED_ERR = 5` (error / sin fix)
+> La dirección I2C del BNO085 queda en la constante `IMU_I2C_ADDRESS` dentro del sketch para que sea fácil ajustarla.
 
-> Si tu hardware usa otros GPIO, cambia solo las constantes al inicio del `.ino`.
+### LEDs
+- `LED_GREEN_PIN = GPIO4` → movimiento / averaging / locked
+- `LED_RED_PIN = GPIO5` → estado GNSS / PPP
 
----
+## Comportamiento implementado
 
-## 2) Parámetros de navegación a ajustar
+- Entrada GNSS no bloqueante para `$GPGGA/$GNGGA`, `$GPRMC/$GNRMC` y `#PPPNAVA`.
+- Yaw del BNO085 por I2C usando `begin_I2C(..., &ImuWire)` y `enableReport(SH2_ROTATION_VECTOR, ...)`.
+- `currentYaw = NAN` si no hay yaw válido; si la IMU falla, la salida sigue funcionando sin aplicar offset falso.
+- Máquina de estados: `MOVING -> STOP_CONFIRM -> AVERAGING -> LOCKED`.
+- En `MOVING/STOP_CONFIRM/AVERAGING` sale posición instantánea corregida.
+- En `LOCKED` sale la posición promediada corregida.
+- Salida `GPGGA` a `Serial2` cada `100 ms` mientras el GNSS esté fresco.
+- Offset antena→pistón de `1.50 m` hacia atrás, aplicado una sola vez por ruta de salida.
+- Diagnóstico PPP textual: `SIN_PPP`, `PPP_CONVERGING`, `PPP_ESTABLE`.
 
-- `offsetMeters`  
-  Distancia (m) para calcular el punto corregido.
+## Configuración manual del UM980
 
-- `lateralOffset`  
-  - `false`: offset en dirección del heading (hacia delante).
-  - `true`: offset lateral.
+Configurar manualmente el receptor; el sketch **no** envía comandos al arrancar.
 
-- `offsetToRight` (solo si `lateralOffset=true`)  
-  - `true`: lateral a la derecha.
-  - `false`: lateral a la izquierda.
+### COM3 hacia el ESP32-S3
+```text
+GPGGA COM3 1
+GPRMC COM3 1
+PPPNAVA COM3 1
+```
 
-- `declinationDeg`  
-  Declinación magnética local (grados), para convertir heading magnético a verdadero.
+### COM1 para diagnóstico
+```text
+GPGGA COM1 1
+GPRMC COM1 1
+PPPNAVA COM1 1
+```
 
-- `headingAlpha`  
-  Filtro del heading (`0..1`): menor valor = más suavizado.
+### COM2 limpio para no mezclar tráfico
+```text
+GPGGA COM2 0
+GPRMC COM2 0
+PPPNAVA COM2 0
+```
 
----
+## Qué debe observarse
 
-## 3) Formato de salida NMEA
+- **COM1 / USB GPS**: comandos, NMEA nativo y `#PPPNAVA`.
+- **COM3 / TX3**: `GGA`, `RMC` y `#PPPNAVA` para alimentar al ESP32-S3.
+- **USB2 / COM2**: si se usa como monitor de retorno, debe quedar limpio de NMEA/PPP propios del UM980.
+- **USB debug del ESP32-S3**: cambios de estado (`MOVING`, `STOP_CONFIRM`, `AVERAGING`, `LOCKED`) y diagnóstico PPP limitado.
+- **Dynatest / salida RS232**: salida objetivo de una trama `$GPGGA,...*CS` cada `100 ms` mientras el GNSS esté fresco.
 
-El firmware **fuerza** la salida a:
-- **`$GPGGA,...*CS`** (talker `GP`)
+## Validación realizada en esta tarea
 
-Esto se hizo para compatibilidad con receptores que esperan específicamente **GPSGGA**.
+- Revisión estática del sketch completo.
+- Revisión estática del uso de la API `Adafruit_BNO08x::begin_I2C` y `enableReport`.
 
----
-
-## 4) Flujo de funcionamiento
-
-1. Lee líneas NMEA del GNSS de entrada.
-2. Procesa sentencias GGA (`$GPGGA` o `$GNGGA`) de entrada.
-3. Toma lat/lon/fix/satélites/altitud.
-4. Lee heading del magnetómetro (filtrado).
-5. Aplica corrección geodésica por distancia + rumbo.
-6. Construye sentencia corregida en formato `$GPGGA`.
-7. Envía por `Serial2` (`OUT`) hacia MAX3232.
-
----
-
-## 5) Autotest al arranque (10 s)
-
-En `setup()` se ejecuta `runAutoTest10s()` y reporta por USB:
-
-- estado de inicialización del magnetómetro,
-- cantidad de lecturas MAG,
-- cantidad de GGA de entrada detectadas,
-- si hubo fix GNSS,
-- cantidad de GPGGA enviadas por salida.
-
-Resultado final:
-- `PASS` → flujo básico operativo.
-- `REVISAR CABLEADO/BAUD/PINES` → revisar conexiones/configuración.
-
----
-
-## 6) Checklist rápido de validación
-
-1. Ver logs por USB a `115200`.
-2. Confirmar que entran GGA del GNSS (`GGA IN > 0`).
-3. Confirmar que hay fix (`fixQ > 0`).
-4. Confirmar lecturas de magnetómetro (`MAG lecturas > 0`).
-5. Confirmar salida al MAX3232 (`GPGGA OUT > 0`).
-6. Verificar que el receptor remoto acepta `$GPGGA`.
-
----
-
-## 7) Notas
-
-- Si usas HMC5883L u otro magnetómetro, habrá que adaptar init/lectura.
-- Si el receptor RS232 requiere otro baud, cambia `OUT_BAUD`.
-- Si no necesitas RX en UART de salida, `OUT_RX_PIN` puede quedar sin uso físico.
+No se declara validación hardware real del ESP32-S3, UM980, BNO085 ni Dynatest dentro de esta tarea.
