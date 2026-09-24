@@ -73,8 +73,8 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 ### LOCKED
 
-- Se publica `$GCGGA` a 10 Hz usando la mejor coordenada disponible.
-- Mientras persista parada se puede mantener la coordenada promediada.
+- Se publica a 10 Hz la coordenada fija promediada/corregida obtenida al cerrar `AVERAGING`.
+- Mientras persista parada se mantiene esa coordenada bloqueada.
 - Si reaparece movimiento o cambio posicional suficiente, volver a `MOVING`.
 - Si la GGA expira, la salida se silencia.
 

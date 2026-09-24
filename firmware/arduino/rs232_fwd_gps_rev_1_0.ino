@@ -279,7 +279,11 @@ void parseGGA(const char* line) {
   for (const char* p = line + 1; p < asterisk; p++) calcChecksum ^= *p;
 
   unsigned char rxChecksum = 0;
-  sscanf(asterisk + 1, "%02hhx", &rxChecksum);
+  if (!isxdigit((unsigned char)asterisk[1]) || !isxdigit((unsigned char)asterisk[2]) ||
+      sscanf(asterisk + 1, "%02hhx", &rxChecksum) != 1) {
+    Serial.println("[GNSS] GGA malformed checksum");
+    return;
+  }
   if (calcChecksum != rxChecksum) {
     Serial.println("[GNSS] GGA checksum error");
     return;
@@ -345,7 +349,11 @@ void parseRMC(const char* line) {
   for (const char* p = line + 1; p < asterisk; p++) calcChecksum ^= *p;
 
   unsigned char rxChecksum = 0;
-  sscanf(asterisk + 1, "%02hhx", &rxChecksum);
+  if (!isxdigit((unsigned char)asterisk[1]) || !isxdigit((unsigned char)asterisk[2]) ||
+      sscanf(asterisk + 1, "%02hhx", &rxChecksum) != 1) {
+    Serial.println("[GNSS] RMC malformed checksum");
+    return;
+  }
   if (calcChecksum != rxChecksum) return;
 
   char* fields[13];
@@ -657,12 +665,13 @@ void updateMovementState() {
         double currentCompareLon = currentLon;
         double lockedCompareLat = lockedReferenceLat;
         double lockedCompareLon = lockedReferenceLon;
-        if (lockedOffsetApplied) {
-          if (!isnan(lockedYaw)) {
-            applyAntennaOffset(currentLat, currentLon, lockedYaw, &currentCompareLat, &currentCompareLon);
-            lockedCompareLat = lockedLat;
-            lockedCompareLon = lockedLon;
-          }
+        if (!isnan(currentYaw)) {
+          applyAntennaOffset(currentLat, currentLon, currentYaw, &currentCompareLat, &currentCompareLon);
+          applyAntennaOffset(lockedReferenceLat, lockedReferenceLon, currentYaw, &lockedCompareLat, &lockedCompareLon);
+        } else if (lockedOffsetApplied && !isnan(lockedYaw)) {
+          applyAntennaOffset(currentLat, currentLon, lockedYaw, &currentCompareLat, &currentCompareLon);
+          lockedCompareLat = lockedLat;
+          lockedCompareLon = lockedLon;
         }
 
         double dist = haversine(currentCompareLat, currentCompareLon, lockedCompareLat, lockedCompareLon);
