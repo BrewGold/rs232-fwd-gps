@@ -686,6 +686,16 @@ void updateMovementState() {
       break;
 
     case LOCKED:
+      if (!speedValid) {
+        movementState = MOVING;
+        lockedValid = false;
+        lockedOffsetApplied = false;
+        lastStopCheckMs = 0;
+        sampleCount = 0;
+        Serial.println("[STATE] LOCKED -> MOVING (velocidad obsoleta)");
+        break;
+      }
+
       if (speedValid && currentSpeedMS > SPEED_EXIT_STOP) {
         movementState = MOVING;
         lockedValid = false;
