@@ -190,6 +190,23 @@ bool startsWithSentence(const char* line, const char* sentenceId) {
   return line && sentenceId && strncmp(line, sentenceId, strlen(sentenceId)) == 0;
 }
 
+bool containsDelimitedToken(const char* line, const char* token) {
+  if (!line || !token || token[0] == '\0') return false;
+
+  size_t tokenLen = strlen(token);
+  const char* match = strstr(line, token);
+  while (match) {
+    char before = (match == line) ? '\0' : match[-1];
+    char after = match[tokenLen];
+    bool beforeOk = (before == ',' || before == '#');
+    bool afterOk = (after == ',' || after == '*' || after == '\r' || after == '\n' || after == '\0');
+    if (beforeOk && afterOk) return true;
+    match = strstr(match + 1, token);
+  }
+
+  return false;
+}
+
 void applyAntennaOffset(double baseLat, double baseLon, double yawDeg, double* correctedLat, double* correctedLon) {
   if (!correctedLat || !correctedLon) return;
 
@@ -417,10 +434,11 @@ void parsePPPNAV(const char* line) {
     return;
   }
 
-  if (strstr(line, "PPP_CONVERGING")) {
+  if (containsDelimitedToken(line, "PPP_CONVERGING")) {
     pppState = PPP_CONVERGING;
     Serial.println("[HAS] State: CONVERGING");
-  } else if (strstr(line, "PPP_ESTABLE") || strstr(line, "PPP_VALID")) {
+  } else if (containsDelimitedToken(line, "PPP_ESTABLE") ||
+             containsDelimitedToken(line, "PPP_VALID")) {
     pppState = PPP_ESTABLE;
     Serial.println("[HAS] State: ESTABLE");
   } else {
@@ -593,6 +611,8 @@ void updateMovementState() {
     case MOVING:
       if (speedValid && ggaValid && currentSpeedMS < SPEED_ENTER_STOP) {
         if (lastStopCheckMs == 0) lastStopCheckMs = nowMs;
+      } else if (!speedValid) {
+        lastStopCheckMs = 0;
       } else if (!ggaValid || (speedValid && currentSpeedMS >= SPEED_EXIT_STOP)) {
         lastStopCheckMs = 0;
       }
