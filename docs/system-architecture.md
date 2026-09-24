@@ -80,16 +80,11 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 ## 5. Selección de calidad GNSS
 
-Orden de prioridad:
+Regla en Rev.1:
 
-1. RTK FIX
-2. Galileo HAS
-3. SBAS (EGNOS)
-4. Autónomo
-
-Regla:
-
-- Siempre emitir en GGA la mejor solución válida disponible según prioridad.
+- El firmware conserva el `fixQ` válido recibido en la GGA de entrada.
+- El estado `LOCKED` no promociona artificialmente la calidad GNSS.
+- El sistema sigue mostrando el estado PPP/HAS por LED y logs, pero la sentencia de salida mantiene el `fixQ` del receptor.
 
 ## 6. Detección de parada
 

@@ -19,6 +19,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_BNO08x.h>
+#include <algorithm>
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
@@ -258,16 +259,7 @@ double trimmed_mean(double* buf, int cnt) {
 
   static double sortBuf[MAX_SAMPLES];
   memcpy(sortBuf, buf, cnt * sizeof(double));
-
-  for (int i = 0; i < cnt - 1; i++) {
-    for (int j = 0; j < cnt - i - 1; j++) {
-      if (sortBuf[j] > sortBuf[j+1]) {
-        double tmp = sortBuf[j];
-        sortBuf[j] = sortBuf[j+1];
-        sortBuf[j+1] = tmp;
-      }
-    }
-  }
+  std::sort(sortBuf, sortBuf + cnt);
 
   int trimCnt = (int)ceil(cnt * 0.05);
   int start, end;
@@ -507,6 +499,7 @@ double readYaw() {
       Serial.println("[IMU] Timeout - yaw=NAN");
     }
     currentYaw = NAN;
+    bnoAvailable = false;
     return NAN;
   }
 
