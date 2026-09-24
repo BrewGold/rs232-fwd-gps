@@ -75,6 +75,7 @@ double currentCourseOverGround = 0.0;
 int satCount = 0;
 char utcTime[12] = "000000.00";
 char hdopField[12] = "1.0";
+char geoidSepField[12] = "0.0";
 
 uint32_t lastSpeedUpdateMs = 0;
 uint32_t lastGgaMs = 0;
@@ -354,6 +355,15 @@ void parseGGA(const char* line) {
     hdopField[sizeof(hdopField) - 1] = '\0';
   }
 
+  double parsedGeoidSep = 0.0;
+  if (fieldCount >= 11 && parseNmeaDouble(fields[11], &parsedGeoidSep)) {
+    strncpy(geoidSepField, fields[11], sizeof(geoidSepField) - 1);
+    geoidSepField[sizeof(geoidSepField) - 1] = '\0';
+  } else {
+    strncpy(geoidSepField, "0.0", sizeof(geoidSepField) - 1);
+    geoidSepField[sizeof(geoidSepField) - 1] = '\0';
+  }
+
   currentLat = lat;
   currentLon = lon;
   currentAlt = alt;
@@ -583,13 +593,16 @@ void updateMovementState() {
   bool speedValid = (nowMs - lastSpeedUpdateMs) <= SPEED_FRESHNESS_MS;
 
   bool ggaValid = (nowMs - lastGgaMs) <= GGA_FRESHNESS_MS;
-  if (!ggaValid) gnssValid = false;
+  if (!ggaValid) {
+    gnssValid = false;
+    lastStopCheckMs = 0;
+  }
 
   switch (movementState) {
     case MOVING:
-      if (speedValid && currentSpeedMS < SPEED_ENTER_STOP) {
+      if (speedValid && ggaValid && currentSpeedMS < SPEED_ENTER_STOP) {
         if (lastStopCheckMs == 0) lastStopCheckMs = nowMs;
-      } else if (speedValid && currentSpeedMS >= SPEED_EXIT_STOP) {
+      } else if (!ggaValid || (speedValid && currentSpeedMS >= SPEED_EXIT_STOP)) {
         lastStopCheckMs = 0;
       }
 
@@ -758,11 +771,11 @@ void transmitDynatestOutput() {
 
   char gga[120];
   snprintf(gga, sizeof(gga),
-           "$GCGGA,%s,%02d%07.4f,%c,%03d%07.4f,%c,%d,%02d,%s,%.1f,M,0.0,M,,",
+           "$GCGGA,%s,%02d%07.4f,%c,%03d%07.4f,%c,%d,%02d,%s,%.1f,M,%s,M,,",
            utcTime,
            outLatDeg, outLatMin, outLatHem,
            outLonDeg, outLonMin, outLonHem,
-           fixQ, satCount, hdopField, outAlt);
+           fixQ, satCount, hdopField, outAlt, geoidSepField);
 
   unsigned char checksum = 0;
   for (const char* p = gga + 1; *p; p++) checksum ^= *p;

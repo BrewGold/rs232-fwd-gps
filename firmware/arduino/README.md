@@ -74,6 +74,7 @@ Rev.1 genera y envía:
 - **`$GCGGA,...*CS`**
 - Frecuencia de salida: 10 Hz (`OUTPUT_PERIOD_MS = 100`) cuando existe GGA válida y fresca.
 - `HDOP`: valor real del campo 8 de la GGA de entrada; si el campo llega vacío o inválido, se usa `1.0` como fallback seguro documentado.
+- Separación geoidal: se conserva el campo 11 de la GGA de entrada; si falta o es inválido, se usa `0.0`.
 
 El `fixQ` de salida se calcula según prioridad:
 1. `LOCKED` con posición válida → `fixQ = 4`
