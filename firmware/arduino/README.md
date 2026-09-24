@@ -1,113 +1,70 @@
 # Firmware Arduino
 
-## Versión final (compilada)
+## Firmware objetivo real
 
-- `rs232_fwd_gps_final_v_0_99.ino` — **v0.9.9 MADRID FINAL**
+- `rs232_fwd_gps_uno_r4_wifi_rev_1_0.ino` — **Rev.1.0 para Arduino UNO R4 WiFi**
 
-Esta es la versión final que se ha compilado y usado en campo. Sustituye a la versión unificada anterior (`rs232_fwd_gps_unificado.ino`) y al borrador `rs232_fwd_gps_draft_v0_9.ino`, que se mantienen solo como referencia histórica.
+Este es el sketch que corresponde al hardware real del proyecto: **Arduino UNO R4 WiFi** programado desde Arduino IDE.
 
-### Hardware
+## Sketches históricos conservados
 
-- GNSS (UM980): RX=44, TX=43, BAUD=115200 (`Serial1`)
-- Salida Dynatest: RX=18, TX=17, BAUD=38400 (`Serial2` → MAX3232)
-- IMU (BNO085): SDA=8, SCL=9 (`Wire1`), I2C 400 kHz, dirección `0x4B`
-- LED_RED: pin 4 (estado GNSS/HAS)
-- LED_GREEN: pin 5 (estado de movimiento/lock)
+Los siguientes archivos se mantienen solo como referencia histórica y **son incompatibles con el despliegue real UNO R4 WiFi** porque dependen de APIs/pines de ESP32-S3:
 
-### Máquina de estados
+- `rs232_fwd_gps_final_v_0_99.ino`
+- `rs232_fwd_gps_draft_v0_9.ino`
 
-**Movimiento:**
-`MOVING → AVERAGING` (velocidad < 0.20 m/s durante 2 s) `→ LOCKED` (promedio de 15 s) `→ MOVING` (si se desplaza > 1.0 m o velocidad > 0.30 m/s)
+## Arquitectura real del UNO R4 WiFi
 
-**PPP/HAS:**
-`SIN_PPP → PPP_CONVERGING → PPP_ESTABLE`
+- **`Serial1`**: GNSS UM980 en **D0/RX** y **D1/TX** a **115200**.
+- **`Serial`**: USB CDC para diagnóstico o para salida Dynatest NMEA limpia.
+- **`Wire`**: I2C principal en **SDA/SCL** con `Wire.begin()` y `Wire.setClock(100000)`.
+- **LED1 / LED2**: por defecto **D6 / D7**, evitando UART, I2C y CAN.
 
-### Corrección antena → pistón
+## Limitación serial real
 
-- Offset: 0.55 m
-- Bearing: `yaw + 270°` (antena a la derecha, pistón a la izquierda)
-- Declinación magnética (Madrid): 1.0° (`yaw_geografico = yaw_magnetico - declinacion`)
+El UNO R4 WiFi no ofrece un `Serial2` equivalente al del firmware histórico ESP32. La Rev.1 usa:
 
----
+- GNSS por `Serial1`.
+- Dynatest por `Serial`/USB CDC cuando se requiere una salida NMEA limpia.
 
-## 1) Mapa de pines
+Eso implica que el mismo puerto USB CDC **no puede** usarse al mismo tiempo para:
 
-### UART entrada GNSS (UM980)
-- `GNSS_RX = 44` → ESP32 recibe desde TX del UM980
-- `GNSS_TX = 43` → ESP32 transmite hacia RX del UM980
-- `GNSS_BAUD = 115200`
+1. logs de diagnóstico, y
+2. `$GCGGA` limpia hacia el enlace Dynatest.
 
-### UART salida a Dynatest (vía MAX3232)
-- `DYNATEST_TX = 17`
-- `DYNATEST_RX = 18`
-- `DYNATEST_BAUD = 38400`
+Si se necesitan dos enlaces físicos simultáneos sin cambiar de modo, será necesario hardware adicional externo.
 
-### I2C IMU (BNO085)
-- `I2C_SDA = 8`
-- `I2C_SCL = 9`
-- `I2C_FREQ = 400000`
-- Dirección: `0x4B` (bus `Wire1`)
+## Funcionalidad Rev.1
 
-### LEDs
-- `LED_RED = 4`: estado GNSS/HAS (parpadeo en `PPP_CONVERGING`, fijo en fix/`PPP_ESTABLE`)
-- `LED_GREEN = 5`: estado de movimiento (parpadeo en `AVERAGING`, fijo en `LOCKED`)
+- checksum XOR para GGA/RMC de entrada;
+- aceptación de `$GPGGA`, `$GNGGA`, `$GCGGA`, `$GPRMC` y `$GNRMC`;
+- salida **`$GCGGA`** a **10 Hz** con **CRLF**;
+- propagación del **HDOP real** del campo 8;
+- silencio de salida cuando la GGA deja de estar fresca;
+- máquina **MOVING → AVERAGING → LOCKED**;
+- confirmación de parada de **2 s**;
+- promedio de **15 s**;
+- detección de salida de lock a **1 m** comparando siempre coordenadas del mismo marco;
+- yaw BNO085 + offset antena‑pistón de **0.55 m** con bearing **yaw + 270°**;
+- declinación de **1°** como parámetro configurable;
+- parser PPP/HAS estricto: solo líneas que empiezan por **`#PPPNAVA`**.
 
----
+## Arnés RJ45/UTP remoto
 
-## 2) Parámetros de navegación
+Etiqueta fija: **`BNO085/LED — NO ETHERNET`**
 
-- `OFFSET_M = 0.55`: distancia antena→pistón en metros.
-- `DECLINATION_OFFSET = 1.0`: declinación magnética local (Madrid), en grados.
-- `STOP_THRESHOLD_MS = 2000`: tiempo bajo velocidad de entrada para pasar a `AVERAGING`.
-- `AVERAGING_WINDOW_MS = 15000`: ventana de promedio en parada (15 s).
-- `SPEED_ENTER_STOP = 0.20` / `SPEED_EXIT_STOP = 0.30` (m/s): histéresis de detección de parada.
-- `NEW_LOCATION_DIST = 1.0`: distancia (m) para salir de `LOCKED` por desplazamiento.
-- `MAX_SAMPLES = 160`: tamaño de buffer de muestras para promedio (lat/lon/alt/yaw).
-- `OUTPUT_PERIOD_MS = 100`: periodo de salida (10 Hz).
+- Pin 1 → `+5V` solo a `VIN/5V` del breakout Adafruit
+- Pin 2 → `GND`
+- Pin 3 → `SDA`
+- Pin 4 → `LED1`
+- Pin 5 → `LED2`
+- Pin 6 → `GND`
+- Pin 7 → `SCL`
+- Pin 8 → `GND`
 
----
+## Compilación esperada
 
-## 3) Formato de salida NMEA
+Sketch objetivo para Arduino IDE / `arduino-cli`:
 
-El firmware genera y envía siempre:
-- **`$GPGGA,...*CS`**
-
-El `fixQ` de salida se calcula según prioridad:
-1. `LOCKED` con posición válida → `fixQ = 4`
-2. `PPP_ESTABLE` (HAS) → `fixQ = 4`
-3. `PPP_CONVERGING` → `fixQ = 2`
-4. En otro caso, con GNSS válido → `fixQ = 1`
-
----
-
-## 4) Flujo de funcionamiento
-
-1. Lee líneas NMEA/propietarias del UM980 por `Serial1` (`$GPGGA`, `$GPRMC`, `#PPPNAVA`/HAS).
-2. Valida checksum y parsea GGA (posición, altitud, satélites, fix) y RMC (velocidad, rumbo).
-3. Actualiza estado PPP/HAS (`SIN_PPP` / `PPP_CONVERGING` / `PPP_ESTABLE`).
-4. Lee yaw del IMU BNO085 (rotation vector) vía `Wire1`, con reintentos e detección de reset.
-5. Actualiza la máquina de estados de movimiento (`MOVING` / `AVERAGING` / `LOCKED`).
-6. En `AVERAGING`, acumula muestras de lat/lon/alt/yaw; al completar 15 s calcula medias recortadas (trimmed mean) y media circular del yaw, y aplica el offset antena→pistón.
-7. En `LOCKED`, transmite la posición corregida; en otro caso transmite la posición instantánea (con offset si hay yaw disponible).
-8. Construye la trama `$GPGGA` y la envía por `Serial2` hacia el MAX3232, a 10 Hz.
-9. Actualiza LEDs de estado (`LED_RED`/`LED_GNSS`, `LED_GREEN`/movimiento).
-
----
-
-## 5) Checklist rápido de validación
-
-1. Ver logs por USB a `115200`.
-2. Confirmar recepción de tramas `[GNSS] GGA:` y `[GNSS] RMC:`.
-3. Confirmar inicialización del IMU (`[IMU] BNO085 initialized`) o reintentos periódicos si falla.
-4. Verificar transición de estados en logs (`[STATE] MOVING -> AVERAGING -> LOCKED`).
-5. Confirmar salida `$GPGGA` hacia el Dynatest y que este la acepta sin errores.
-6. Validar comportamiento de LEDs: `LED_RED` (GNSS/HAS) y `LED_GREEN` (movimiento/lock).
-
----
-
-## 6) Notas
-
-- Requiere la librería `Adafruit_BNO08x`.
-- Si el receptor Dynatest requiere otro baudrate, ajustar `DYNATEST_BAUD`.
-- La declinación magnética (`DECLINATION_OFFSET`) está calibrada para Madrid; ajustar si se despliega en otra ubicación.
-- Los archivos `rs232_fwd_gps_unificado.ino` y `rs232_fwd_gps_draft_v0_9.ino` se conservan como versiones anteriores/experimentales, no representan el firmware final compilado.
+- **Board:** `arduino:renesas_uno:unor4wifi`
+- **Archivo:** `firmware/arduino/rs232_fwd_gps_uno_r4_wifi_rev_1_0.ino`

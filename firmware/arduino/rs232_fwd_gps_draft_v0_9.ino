@@ -1,3 +1,4 @@
+// HISTORICAL NOTE: ESP32-S3-specific sketch kept only for reference.
 // ======================================================
 // RS232 FWD GPS - DRAFT V0.9
 //
