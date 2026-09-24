@@ -1,9 +1,9 @@
-MANUAL OPERATIVO  
-simpleRTK3B Budget + ESP32-S3 UNO + FWD GPGGA + USB2/RS232 + Galileo HAS
+MANUAL OPERATIVO
+simpleRTK3B Budget + ESP32-S3 UNO + FWD GCGGA + USB2/RS232 + Galileo HAS
 
-Versión: 1.1  
-Fecha: 17/09/2026  
-Preparado para: Operación técnica / campo  
+Versión: 1.1
+Fecha: 17/09/2026
+Preparado para: Operación técnica / campo
 Referencia base: User Guide simpleRTK3B Budget (ArduSimple, mod. 2026/04/05)
 
 ====================================================
@@ -17,7 +17,7 @@ Implementar y validar un sistema donde:
 - COM3 entrega GGA, VTG/RMC y, durante la prueba HAS, PPPNAVA.
 - COM1 / USB GPS se utiliza para configuración, diagnóstico y observación local.
 - ESP32 procesa posición, velocidad, offset y lógica detenido/promedio 15 s.
-- ESP32 reenvía GPGGA por:
+- ESP32 reenvía GCGGA por:
   - COM2 (RX2) del RTK3B para visualización por USB2.
   - MAX3232 para salida RS232 al Dynatest, opcional.
 - En detenido, salida promediada (15 s) a 10 Hz.
@@ -48,7 +48,7 @@ Notas clave:
 - Para monitor limpio en USB2, COM2 debe quedar sin NMEA propio.
 - COM1 y COM3 deben recibir los diagnósticos HAS durante la prueba.
 - El ESP32 debe ignorar PPPNAVA/BESTNAVA para la salida Dynatest; solo debe
-  reenviar/generar GPGGA.
+  reenviar/generar GCGGA.
 
 ====================================================
 
@@ -57,19 +57,19 @@ Notas clave:
 
 Flujo principal:
 
-1) RTK3B COM3 TX3 -> ESP32 GNSS RX  
-2) COM3 entrega GGA + VTG/RMC + PPPNAVA de diagnóstico  
-3) ESP32 procesa posición, velocidad, estado y offset  
-4) ESP32 OUT TX -> RTK3B COM2 RX2 (monitor USB2)  
-5) ESP32 OUT TX -> MAX3232 -> Dynatest Compact15 (RS232)  
+1) RTK3B COM3 TX3 -> ESP32 GNSS RX
+2) COM3 entrega GGA + VTG/RMC + PPPNAVA de diagnóstico
+3) ESP32 procesa posición, velocidad, estado y offset
+4) ESP32 OUT TX -> RTK3B COM2 RX2 (monitor USB2)
+5) ESP32 OUT TX -> MAX3232 -> Dynatest Compact15 (RS232)
 6) COM1 / USB GPS permite observar configuración y PPPNAVA directamente
 
 Durante una prueba HAS:
 
 - COM1 muestra los comandos, respuestas y diagnósticos locales.
 - COM3 lleva los mismos diagnósticos necesarios hacia el ESP32.
-- COM2 queda reservado para el retorno GPGGA del ESP32.
-- Dynatest recibe únicamente GPGGA a 38400 baudios y 10 Hz.
+- COM2 queda reservado para el retorno GCGGA del ESP32.
+- Dynatest recibe únicamente GCGGA a 38400 baudios y 10 Hz.
 
 ====================================================
 
@@ -91,6 +91,27 @@ Para una prueba HAS válida:
 - Mantener la antena fija y con cielo abierto.
 - No apagar el receptor durante la convergencia.
 - Registrar el texto completo de PPPNAVA y BESTNAVA.
+
+4.1 Arnés remoto BNO085/LED (RJ45/UTP)
+
+- Conector: RJ45/8P8C custom, cable UTP directo pin-a-pin.
+- Etiqueta obligatoria: **BNO085/LED — NO ETHERNET**.
+- Nunca conectar a Ethernet ni PoE.
+- Pin 1 = +5 V (**solo** hacia `VIN/5V` del breakout Adafruit BNO085).
+- Pin 2 = GND.
+- Pin 3 = SDA.
+- Pin 4 = LED1 (`GPIO4`).
+- Pin 5 = LED2 (`GPIO5`).
+- Pin 6 = GND.
+- Pin 7 = SCL.
+- Pin 8 = GND.
+- Nunca aplicar +5 V directamente al IC BNO085 ni al pin `3V3`.
+- Configurar I2C del BNO085 a 100 kHz.
+- Usar pares trenzados donde sea práctico y mantener el arnés alejado del
+  cableado de motor, solenoides y potencia de la bomba hidráulica.
+- Cuando haya cruces con potencia, hacerlos aproximadamente a 90°.
+- Colocar desacoplo local en el breakout (100 nF + bulk 10-100 uF).
+- Verificar continuidad pin-a-pin antes de energizar.
 
 ====================================================
 
@@ -297,16 +318,25 @@ Regla de ingeniería:
 9. CONFIGURACIÓN ESP32 (REFERENCIA DE FIRMWARE)
 ------------------------------------------------
 
-Firmware operativo de referencia:
+Firmware Rev.1 actual:
 
-firmware/arduino/firmware_arduino_rs232_fwd_gps_unificado.ino
+firmware/arduino/rs232_fwd_gps_rev_1_0.ino
 
-Draft separado para evolución:
+Firmware histórico de referencia:
+
+firmware/arduino/rs232_fwd_gps_final_v_0_99.ino
+
+Draft separado para evolución histórica:
 
 firmware/arduino/rs232_fwd_gps_draft_v0_9.ino
 
-El draft no reemplaza al firmware operativo y queda pendiente de datos reales
-de PPPNAVA, parser definitivo, BNO085, offset y GGA final.
+La Rev.1 parte de la v0.99 de campo y conserva el comportamiento base
+de offset, promedio de 15 s, UART y LEDs, con cambios puntuales:
+- salida Dynatest en GCGGA;
+- HDOP real tomado de GGA campo 8;
+- aceptación de GPGGA/GNGGA/GCGGA de entrada;
+- I2C BNO085 a 100 kHz;
+- silencio de salida tras timeout de frescura GGA.
 
 Parámetros críticos del enlace operativo:
 
@@ -328,8 +358,8 @@ Parámetros críticos del enlace operativo:
 | USB GPS / COM1 | OK, NMEA nativo, PPPNAVA, BESTNAVA | Configurar y verificar HAS |
 | COM3 / TX3 | GGA, VTG/RMC, PPPNAVA, BESTNAVA | Alimentar ESP32 y transportar diagnóstico |
 | USB debug ESP32 | GGA recibida, estado PPPNAVA bruto, INST/AVG15s | Validar lógica interna |
-| USB2 / COM2 | GPGGA del ESP32 a 10 Hz, sin mezcla | Validar retorno FWD |
-| Dynatest / RS232 | Solo GPGGA a 38400 y 10 Hz | Validar entrada del Compact15 |
+| USB2 / COM2 | GCGGA del ESP32 a 10 Hz, sin mezcla | Validar retorno FWD |
+| Dynatest / RS232 | Solo GCGGA a 38400 y 10 Hz | Validar entrada del Compact15 |
 
 Ejemplo de líneas que deben verse en COM1 y COM3 durante la prueba:
 
@@ -361,7 +391,7 @@ estado posterior para cerrar el parser definitivo.
 12. Confirmar que el ESP32 ignora PPPNAVA/BESTNAVA para la salida Dynatest.
 13. En movimiento confirmar OUT[INST].
 14. Detener 2-3 s y confirmar OUT[AVG15s].
-15. Abrir USB2 y confirmar GPGGA a 10 Hz sin mezcla.
+15. Abrir USB2 y confirmar GCGGA a 10 Hz sin mezcla.
 16. Confirmar recepción RS232 en Dynatest.
 17. Solo después de la captura real, cerrar el parser definitivo de HAS.
 
@@ -369,10 +399,14 @@ Criterio de aceptación:
 - COM1 y COM3 muestran PPPNAVA/BESTNAVA durante la prueba HAS.
 - El estado PPP_CONVERGING queda registrado.
 - El estado estable queda registrado con texto real del UM980.
-- El ESP32 mantiene la salida GPGGA aunque el estado PPP sea desconocido.
+- El ESP32 mantiene la salida GCGGA aunque el estado PPP sea desconocido.
+- El HDOP de salida refleja cambios reales de la GGA recibida.
+- La salida conserva checksum válido y terminación CRLF.
+- La salida se silencia si expira el timeout de frescura GGA.
 - USB2 queda limpio y estable a 10 Hz.
-- Dynatest recibe solo GPGGA a 38400.
+- Dynatest recibe solo GCGGA a 38400.
 - No hay doble aplicación del offset.
+- El BNO085 funciona a 100 kHz con la bomba OFF y ON.
 
 ====================================================
 
@@ -414,7 +448,7 @@ Caso F: No entra en AVG15s
 Caso G: Dynatest no recibe datos
 - Confirmar MAX3232 y cruce TX/RX.
 - Confirmar 38400, 8N1.
-- Confirmar que el firmware genera GPGGA con checksum.
+- Confirmar que el firmware genera GCGGA con checksum.
 - Confirmar que COM2 no está conectado directamente al Dynatest por error.
 
 ====================================================
@@ -493,43 +527,50 @@ Datos de ensayo:
 - Baud COM2: _____________
 
 Pre-check:
-[ ] Antena conectada antes de power  
-[ ] Cielo abierto suficiente  
-[ ] GND común confirmado  
-[ ] COM1 accesible por USB GPS  
-[ ] Firmware/build UM980 registrado  
-[ ] Sin NTRIP/RTCM externo durante prueba HAS  
+[ ] Antena conectada antes de power
+[ ] Cielo abierto suficiente
+[ ] GND común confirmado
+[ ] COM1 accesible por USB GPS
+[ ] Firmware/build UM980 registrado
+[ ] Sin NTRIP/RTCM externo durante prueba HAS
+[ ] Continuidad RJ45/UTP verificada antes de energizar
+[ ] Arnés marcado como BNO085/LED — NO ETHERNET
 
 Configuración:
-[ ] COM3 con GGA + VTG/RMC  
-[ ] PPPNAVA activo en COM1  
-[ ] BESTNAVA activo en COM1  
-[ ] PPPNAVA activo en COM3  
-[ ] BESTNAVA activo en COM3  
-[ ] COM2 sin NMEA propio  
-[ ] COM2 sin PPPNAVA/BESTNAVA  
-[ ] HAS configurado  
-[ ] SAVECONFIG ejecutado  
-[ ] VERSIONA y UNILOGLIST guardados  
+[ ] COM3 con GGA + VTG/RMC
+[ ] PPPNAVA activo en COM1
+[ ] BESTNAVA activo en COM1
+[ ] PPPNAVA activo en COM3
+[ ] BESTNAVA activo en COM3
+[ ] COM2 sin NMEA propio
+[ ] COM2 sin PPPNAVA/BESTNAVA
+[ ] HAS configurado
+[ ] SAVECONFIG ejecutado
+[ ] VERSIONA y UNILOGLIST guardados
 
 Captura HAS:
-[ ] 10-20 líneas PPP_CONVERGING guardadas  
-[ ] 10-20 líneas estado estable guardadas  
-[ ] Checksums conservados  
-[ ] Estado final no asumido sin evidencia  
+[ ] 10-20 líneas PPP_CONVERGING guardadas
+[ ] 10-20 líneas estado estable guardadas
+[ ] Checksums conservados
+[ ] Estado final no asumido sin evidencia
 
 Validación:
-[ ] ESP32 recibe GGA desde COM3  
-[ ] ESP32 registra PPPNAVA sin reenviarlo al Dynatest  
-[ ] ESP32 muestra OUT[INST] en movimiento  
-[ ] ESP32 muestra OUT[AVG15s] detenido  
-[ ] USB2 muestra GPGGA a 10 Hz  
-[ ] Dynatest recibe GPGGA a 38400  
-[ ] RS232 externo OK  
+[ ] ESP32 recibe GGA desde COM3
+[ ] ESP32 registra PPPNAVA sin reenviarlo al Dynatest
+[ ] ESP32 muestra OUT[INST] en movimiento
+[ ] ESP32 muestra OUT[AVG15s] detenido
+[ ] USB2 muestra GCGGA a 10 Hz
+[ ] Dynatest recibe GCGGA a 38400
+[ ] HDOP de salida cambia con la GGA real
+[ ] Checksum/CRLF correctos
+[ ] Silencio de salida tras timeout de frescura GGA
+[ ] BNO085 estable a 100 kHz con bomba OFF
+[ ] BNO085 estable a 100 kHz con bomba ON
+[ ] RS232 externo OK
 
 Resultado final:
-[ ] APROBADO  
-[ ] OBSERVADO  
+[ ] APROBADO
+[ ] OBSERVADO
 
 Observaciones:
 ____________________________________________________

@@ -39,16 +39,16 @@ Funciones:
 - Generación GGA
 - Control LEDs
 
-### Sensor de orientación (experimental)
+### Sensor de orientación
 
 - Adafruit BNO085/BNO086
 - Interfaz I²C
-- Uso previsto: obtención de rumbo absoluto
+- Uso en Rev.1: yaw para corregir el offset antena→pistón cuando el IMU está disponible
 
 Estado actual:
 
-- Experimental
-- No se utilizará inicialmente para corregir coordenadas
+- Integrado en Rev.1 con fallback a GNSS puro si no hay yaw válido
+- Mantiene el comportamiento de la v0.99 de campo
 
 ### Comunicación Dynatest
 
@@ -73,12 +73,13 @@ Conexión:
 
 - Puerto: ESP32-S3 UART2
 - Velocidad: 38400 baud
-- Salida: GGA a 10 Hz
+- Salida: `$GCGGA` a 10 Hz, con checksum XOR y `CRLF`
 
 ### I²C IMU
 
 - ESP32-S3 ↔ BNO085
 - Velocidad: 100 kHz
+- Pines: SDA=8, SCL=9, dirección `0x4B`
 
 ## Posicionamiento
 
@@ -111,13 +112,10 @@ Resultado:
 
 ### Coordenada enviada
 
-Inicialmente:
-
-- Posición media de la antena GNSS
-
-No se aplicará:
-
-- Corrección por trayectoria previa
+- En `MOVING`: posición instantánea con offset antena→pistón si hay yaw válido.
+- En `LOCKED`: posición promedio de 15 s con el mismo offset aplicado una sola vez.
+- Si el BNO085 no entrega yaw válido, la salida cae a posición GNSS pura.
+- No se aplica corrección por trayectoria previa.
 
 ## Indicadores externos
 
@@ -125,35 +123,45 @@ Ubicación:
 
 - Integrados en el módulo remoto asociado al BNO085
 
-### LED 1 — POWER
+### LED 1 — GPIO4 / LED_RED
 
-- Apagado → Sin alimentación
-- Encendido → Sistema operativo
+- Apagado → Sin fix GNSS válido
+- Parpadeo → PPP convergiendo
+- Encendido → GNSS válido / PPP estable
 
-### LED 2 — GNSS
+### LED 2 — GPIO5 / LED_GREEN
 
-- Apagado → Sin solución
-- Parpadeo lento → GPS autónomo
-- 2 destellos → SBAS
-- 3 destellos → Galileo HAS
-- Encendido fijo → RTK FIX
+- Apagado → MOVING
+- Parpadeo lento → AVERAGING
+- Encendido fijo → LOCKED válido
 
 ## Cableado IMU
 
 Conector:
 
 - RJ45 (CAT5e/CAT6)
+- **BNO085/LED — NO ETHERNET**
 
 Asignación:
 
-- Pin 1: SDA
+- Pin 1: +5 V (solo a `VIN/5V` del breakout Adafruit)
 - Pin 2: GND
-- Pin 3: SCL
-- Pin 4: +3V3
-- Pin 5: +3V3
+- Pin 3: SDA
+- Pin 4: LED1 (`GPIO4`)
+- Pin 5: LED2 (`GPIO5`)
 - Pin 6: GND
-- Pin 7: LED_POWER
-- Pin 8: LED_GNSS
+- Pin 7: SCL
+- Pin 8: GND
+
+Guía práctica:
+
+- No conectar a Ethernet ni PoE.
+- No aplicar +5 V directamente al IC BNO085 ni al pin `3V3`.
+- Usar pares trenzados donde sea práctico.
+- Separar el arnés del cableado de motor/solenoides/potencia de la FWD.
+- Cruzar señal y potencia cerca de 90° cuando sea necesario.
+- Añadir desacoplo local 100 nF + capacidad bulk en el breakout.
+- Verificar continuidad pin a pin antes de energizar.
 
 ## Software
 
@@ -162,14 +170,17 @@ Asignación:
 - Leer GGA
 - Leer RMC
 - Actualizar historial
+- Mantener salida `$GCGGA` si GNSS es válido y fresco
 
 ### Estado STOPPED
 
 - Promedio 15 s
+- Mantener salida `$GCGGA` mientras exista GNSS válido y fresco
 
 ### Estado OUTPUT
 
-- Mantener salida GGA a 10 Hz al Dynatest
+- Mantener salida `$GCGGA` a 10 Hz al Dynatest
+- Silenciar la salida tras timeout de frescura GGA
 
 ## Fases del proyecto
 
@@ -206,3 +217,23 @@ Instalar:
 - RJ45
 
 Para evaluación de corrección geométrica futura.
+
+## Rev.1 — cambios y aceptación
+
+Cambios clave:
+
+- `$GPGGA` histórico en salida sustituido por `$GCGGA` en la transmisión al Dynatest.
+- `HDOP` de salida tomado del campo 8 de la GGA de entrada.
+- I²C del BNO085 reducido a 100 kHz para el arnés remoto.
+- Aceptación de talker IDs `$GPGGA`, `$GNGGA` y `$GCGGA`.
+
+Checklist de aceptación Rev.1:
+
+- [ ] `$GCGGA` se mantiene en MOVING y en parada con GNSS válido.
+- [ ] El `HDOP` cambia con los valores reales recibidos.
+- [ ] Checksum XOR y `CRLF` correctos.
+- [ ] Salida estable a 10 Hz.
+- [ ] Silencio tras timeout de frescura GGA.
+- [ ] BNO085 operativo a 100 kHz.
+- [ ] Continuidad/pinout del RJ45 verificados antes de energizar.
+- [ ] Prueba de hardware con bomba OFF y ON.
