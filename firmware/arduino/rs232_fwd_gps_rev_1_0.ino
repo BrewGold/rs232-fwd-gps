@@ -201,10 +201,33 @@ void applyAntennaOffset(double baseLat, double baseLon, double yawDeg, double* c
   double bearingRad = toRadians(correctionBearing);
 
   double latOffsetRad = offsetRad * cos(bearingRad);
-  double lonOffsetRad = offsetRad * sin(bearingRad) / cos(toRadians(baseLat));
+  double cosLat = cos(toRadians(baseLat));
+  double lonOffsetRad = 0.0;
+  if (fabs(cosLat) >= 1e-12) {
+    lonOffsetRad = offsetRad * sin(bearingRad) / cosLat;
+  }
 
   *correctedLat += toDegrees(latOffsetRad);
   *correctedLon += toDegrees(lonOffsetRad);
+}
+
+void encodeNmeaCoordinate(double value, bool isLatitude, int* degreesOut, double* minutesOut, char* hemisphereOut) {
+  if (!degreesOut || !minutesOut || !hemisphereOut) return;
+
+  double absValue = fabs(value);
+  int degrees = (int)absValue;
+  double minutes = (absValue - degrees) * 60.0;
+
+  minutes = round(minutes * 10000.0) / 10000.0;
+  if (minutes >= 60.0) {
+    minutes -= 60.0;
+    degrees += 1;
+  }
+
+  *degreesOut = degrees;
+  *minutesOut = minutes;
+  *hemisphereOut = isLatitude ? ((value >= 0.0) ? 'N' : 'S')
+                              : ((value >= 0.0) ? 'E' : 'W');
 }
 
 double haversine(double lat1, double lon1, double lat2, double lon2) {
@@ -698,6 +721,12 @@ void transmitDynatestOutput() {
   if (!gnssValid || fixQ < 1) return;
 
   double outLat, outLon, outAlt, outYaw;
+  int outLatDeg = 0;
+  int outLonDeg = 0;
+  double outLatMin = 0.0;
+  double outLonMin = 0.0;
+  char outLatHem = 'N';
+  char outLonHem = 'E';
 
   if (movementState == LOCKED && lockedValid) {
     outLat = lockedLat;
@@ -724,12 +753,15 @@ void transmitDynatestOutput() {
     }
   }
 
+  encodeNmeaCoordinate(outLat, true, &outLatDeg, &outLatMin, &outLatHem);
+  encodeNmeaCoordinate(outLon, false, &outLonDeg, &outLonMin, &outLonHem);
+
   char gga[120];
   snprintf(gga, sizeof(gga),
            "$GCGGA,%s,%02d%07.4f,%c,%03d%07.4f,%c,%d,%02d,%s,%.1f,M,0.0,M,,",
            utcTime,
-           (int)fabs(outLat), (fabs(outLat) - (int)fabs(outLat)) * 60.0, (outLat >= 0) ? 'N' : 'S',
-           (int)fabs(outLon), (fabs(outLon) - (int)fabs(outLon)) * 60.0, (outLon >= 0) ? 'E' : 'W',
+           outLatDeg, outLatMin, outLatHem,
+           outLonDeg, outLonMin, outLonHem,
            fixQ, satCount, hdopField, outAlt);
 
   unsigned char checksum = 0;

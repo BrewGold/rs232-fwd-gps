@@ -62,7 +62,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 - Se ingiere GNSS continuo.
 - Se actualiza historial para detección de parada.
-- Se mantiene salida `$GCGGA` 10 Hz.
+- Se mantiene salida `$GCGGA` 10 Hz mientras la GGA siga válida y fresca.
 
 ### AVERAGING
 
