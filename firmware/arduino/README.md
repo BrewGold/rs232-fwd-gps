@@ -76,11 +76,8 @@ Rev.1 genera y envía:
 - `HDOP`: valor real del campo 8 de la GGA de entrada; si el campo llega vacío o inválido, se usa `1.0` como fallback seguro documentado.
 - Separación geoidal: se conserva el campo 11 de la GGA de entrada; si falta o es inválido, se usa `0.0`.
 
-El `fixQ` de salida se calcula según prioridad:
-1. `LOCKED` con posición válida → `fixQ = 4`
-2. `PPP_ESTABLE` (HAS) → `fixQ = 4`
-3. `PPP_CONVERGING` → `fixQ = 2`
-4. En otro caso, con GNSS válido → `fixQ = 1`
+El `fixQ` de salida conserva el `fixQ` válido recibido en la GGA de entrada.
+El estado `LOCKED` no eleva artificialmente ese campo.
 
 ---
 

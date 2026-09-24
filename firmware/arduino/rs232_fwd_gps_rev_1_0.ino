@@ -73,6 +73,7 @@ double currentSpeedMS = 0.0;
 double currentCourseOverGround = 0.0;
 
 int satCount = 0;
+int currentFixQ = 0;
 char utcTime[12] = "000000.00";
 char hdopField[12] = "1.0";
 char geoidSepField[12] = "0.0";
@@ -90,7 +91,6 @@ int sampleCount = 0;
 int yawSampleCount = 0;
 
 bool lockedValid = false;
-bool lockedOffsetApplied = false;
 double lockedLat = 0.0;
 double lockedLon = 0.0;
 double lockedAlt = 0.0;
@@ -367,6 +367,7 @@ void parseGGA(const char* line) {
   currentLat = lat;
   currentLon = lon;
   currentAlt = alt;
+  currentFixQ = fixQ;
   gnssValid = true;
   lastGgaMs = millis();
 
@@ -581,10 +582,7 @@ void updateLED() {
 
 int getOutputFixQ() {
   if (!gnssValid) return 0;
-  if (movementState == LOCKED && lockedValid) return 4;
-  if (pppState == PPP_ESTABLE) return 4;
-  if (pppState == PPP_CONVERGING) return 2;
-  return 1;
+  return (currentFixQ > 0) ? currentFixQ : 1;
 }
 
 void updateMovementState() {
@@ -618,7 +616,6 @@ void updateMovementState() {
 
         movementState = AVERAGING;
         lockedValid = false;
-        lockedOffsetApplied = false;
         Serial.println("[STATE] MOVING -> AVERAGING");
       }
       break;
@@ -643,7 +640,6 @@ void updateMovementState() {
       if (speedValid && currentSpeedMS > SPEED_EXIT_STOP) {
         movementState = MOVING;
         lockedValid = false;
-        lockedOffsetApplied = false;
         lastStopCheckMs = 0;
         sampleCount = 0;
         Serial.println("[STATE] AVERAGING -> MOVING (velocidad aumentó)");
@@ -659,7 +655,6 @@ void updateMovementState() {
         if (isnan(lockedLat) || isnan(lockedLon)) {
           movementState = MOVING;
           lockedValid = false;
-          lockedOffsetApplied = false;
           sampleCount = 0;
           Serial.println("[STATE] AVERAGING failed - invalid trimmed means");
           break;
@@ -667,10 +662,8 @@ void updateMovementState() {
 
         if (!isnan(lockedYaw)) {
           applyAntennaOffset(lockedLat, lockedLon, lockedYaw, &lockedLat, &lockedLon);
-          lockedOffsetApplied = true;
           Serial.printf("[LOCKED] offset aplicado, bearing=%.1f°\n", normalizeAngle(lockedYaw + 270.0));
         } else {
-          lockedOffsetApplied = false;
           Serial.println("[LOCKED] yaw NAN - offset NO aplicado (posición GNSS pura)");
         }
 
@@ -689,7 +682,6 @@ void updateMovementState() {
       if (!speedValid) {
         movementState = MOVING;
         lockedValid = false;
-        lockedOffsetApplied = false;
         lastStopCheckMs = 0;
         sampleCount = 0;
         Serial.println("[STATE] LOCKED -> MOVING (velocidad obsoleta)");
@@ -699,7 +691,6 @@ void updateMovementState() {
       if (speedValid && currentSpeedMS > SPEED_EXIT_STOP) {
         movementState = MOVING;
         lockedValid = false;
-        lockedOffsetApplied = false;
         lastStopCheckMs = 0;
         sampleCount = 0;
         Serial.println("[STATE] LOCKED -> MOVING (velocidad alta)");
@@ -707,24 +698,10 @@ void updateMovementState() {
       }
 
       if (gnssValid) {
-        double currentCompareLat = currentLat;
-        double currentCompareLon = currentLon;
-        double lockedCompareLat = lockedReferenceLat;
-        double lockedCompareLon = lockedReferenceLon;
-        if (!isnan(currentYaw)) {
-          applyAntennaOffset(currentLat, currentLon, currentYaw, &currentCompareLat, &currentCompareLon);
-          applyAntennaOffset(lockedReferenceLat, lockedReferenceLon, currentYaw, &lockedCompareLat, &lockedCompareLon);
-        } else if (lockedOffsetApplied && !isnan(lockedYaw)) {
-          applyAntennaOffset(currentLat, currentLon, lockedYaw, &currentCompareLat, &currentCompareLon);
-          lockedCompareLat = lockedLat;
-          lockedCompareLon = lockedLon;
-        }
-
-        double dist = haversine(currentCompareLat, currentCompareLon, lockedCompareLat, lockedCompareLon);
+        double dist = haversine(currentLat, currentLon, lockedReferenceLat, lockedReferenceLon);
         if (dist > NEW_LOCATION_DIST) {
           movementState = MOVING;
           lockedValid = false;
-          lockedOffsetApplied = false;
           lastStopCheckMs = 0;
           sampleCount = 0;
           Serial.printf("[STATE] LOCKED -> MOVING (dist %.2fm)\n", dist);
