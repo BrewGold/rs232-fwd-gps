@@ -95,7 +95,7 @@ Conexión:
 Condición implementada en Rev.1:
 
 - Velocidad < 0,20 m/s durante 2 s para entrar en `AVERAGING`
-- Salida de `LOCKED` por velocidad > 0,30 m/s, por velocidad obsoleta o por cambio posicional > 1,0 m frente a la referencia bloqueada (`NEW_LOCATION_DIST`)
+- Salida de `LOCKED` por velocidad > 0,30 m/s o por cambio posicional > 1,0 m frente a la referencia bloqueada (`NEW_LOCATION_DIST`)
 
 ### Promedio GNSS
 

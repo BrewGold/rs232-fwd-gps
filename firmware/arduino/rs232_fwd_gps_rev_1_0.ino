@@ -599,9 +599,9 @@ int getOutputFixQ() {
 void updateMovementState() {
   uint32_t nowMs = millis();
 
-  bool speedValid = (nowMs - lastSpeedUpdateMs) <= SPEED_FRESHNESS_MS;
+  bool speedValid = (lastSpeedUpdateMs != 0) && ((nowMs - lastSpeedUpdateMs) <= SPEED_FRESHNESS_MS);
 
-  bool ggaValid = (nowMs - lastGgaMs) <= GGA_FRESHNESS_MS;
+  bool ggaValid = (lastGgaMs != 0) && ((nowMs - lastGgaMs) <= GGA_FRESHNESS_MS);
   if (!ggaValid) {
     gnssValid = false;
     lastStopCheckMs = 0;
@@ -634,6 +634,15 @@ void updateMovementState() {
       break;
 
     case AVERAGING:
+      if (!speedValid) {
+        movementState = MOVING;
+        lockedValid = false;
+        lastStopCheckMs = 0;
+        sampleCount = 0;
+        Serial.println("[STATE] AVERAGING -> MOVING (velocidad obsoleta)");
+        break;
+      }
+
       if (ggaValid && lastGgaMs != lastSampledGgaMs && sampleCount < MAX_SAMPLES) {
         latBuffer[sampleCount] = currentLat;
         lonBuffer[sampleCount] = currentLon;
