@@ -575,7 +575,7 @@ void updateLED() {
 
 int getOutputFixQ() {
   if (!gnssValid) return 0;
-  return (currentFixQ > 0) ? currentFixQ : 1;
+  return (currentFixQ > 0) ? currentFixQ : 0;
 }
 
 void updateMovementState() {
@@ -672,15 +672,6 @@ void updateMovementState() {
       break;
 
     case LOCKED:
-      if (!speedValid) {
-        movementState = MOVING;
-        lockedValid = false;
-        lastStopCheckMs = 0;
-        sampleCount = 0;
-        Serial.println("[STATE] LOCKED -> MOVING (velocidad obsoleta)");
-        break;
-      }
-
       if (speedValid && currentSpeedMS > SPEED_EXIT_STOP) {
         movementState = MOVING;
         lockedValid = false;

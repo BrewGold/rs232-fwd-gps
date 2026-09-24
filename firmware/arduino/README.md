@@ -95,7 +95,7 @@ El estado `LOCKED` no eleva artificialmente ese campo.
 
 ### Correcciones Rev.1
 
-- La salida ya no depende de haber alcanzado `LOCKED`; se transmite también en `MOVING` siempre que GNSS siga válido y fresco.
+- La salida ya no depende de haber alcanzado `LOCKED`; se transmite en `MOVING` y `AVERAGING` siempre que GNSS siga válido y fresco.
 - El parser acepta exactamente `$GPGGA`, `$GNGGA` y `$GCGGA`; evita coincidencias parciales accidentales.
 - La detección PPP/HAS solo clasifica líneas `#PPPNAVA`; evita tratar cualquier texto con `HAS` como estado válido.
 - La salida se silencia si vence `GGA_FRESHNESS_MS`, preservando el comportamiento de seguridad ante datos obsoletos.
