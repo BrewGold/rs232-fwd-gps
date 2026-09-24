@@ -95,6 +95,8 @@ double lockedYaw = NAN;
 
 double lastLockedLat = 0.0;
 double lastLockedLon = 0.0;
+double lastLockedRawLat = 0.0;
+double lastLockedRawLon = 0.0;
 
 Adafruit_BNO08x bno08x;
 sh2_SensorValue_t sensorValue;
@@ -309,7 +311,9 @@ void parseRMC(const char* line) {
 }
 
 void parsePPPNAV(const char* line) {
-  if (strstr(line, "HAS") || strstr(line, "PPP_ESTABLE")) {
+  if (strncmp(line, "#PPPNAVA", 8) != 0) return;
+
+  if (strstr(line, "PPP_ESTABLE") || strstr(line, "HAS")) {
     pppState = PPP_ESTABLE;
     Serial.println("[HAS] State: ESTABLE");
   } else if (strstr(line, "PPP_CONVERGING")) {
@@ -338,7 +342,7 @@ void readGNSSSerial() {
           parseGGA(gnssLineBuf);
         } else if (strstr(gnssLineBuf, "$GPRMC")) {
           parseRMC(gnssLineBuf);
-        } else if (strstr(gnssLineBuf, "#PPPNAVA") || strstr(gnssLineBuf, "HAS")) {
+        } else if (strncmp(gnssLineBuf, "#PPPNAVA", 8) == 0) {
           parsePPPNAV(gnssLineBuf);
         }
 
@@ -543,6 +547,9 @@ void updateMovementState() {
           break;
         }
 
+        double rawLockedLat = lockedLat;
+        double rawLockedLon = lockedLon;
+
         if (!isnan(lockedYaw)) {
           double correctionBearing = normalizeAngle(lockedYaw + 270.0);
           double offsetRad = OFFSET_M / EARTH_RADIUS;
@@ -559,6 +566,8 @@ void updateMovementState() {
           Serial.println("[LOCKED] yaw NAN - offset NO aplicado (posición GNSS pura)");
         }
 
+        lastLockedRawLat = rawLockedLat;
+        lastLockedRawLon = rawLockedLon;
         lastLockedLat = lockedLat;
         lastLockedLon = lockedLon;
 
@@ -582,7 +591,7 @@ void updateMovementState() {
       }
 
       if (gnssValid) {
-        double dist = haversine(currentLat, currentLon, lastLockedLat, lastLockedLon);
+        double dist = haversine(currentLat, currentLon, lastLockedRawLat, lastLockedRawLon);
         if (dist > NEW_LOCATION_DIST) {
           movementState = MOVING;
           lockedValid = false;
