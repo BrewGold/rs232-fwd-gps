@@ -73,12 +73,13 @@ Conexión:
 
 - Puerto: ESP32-S3 UART2
 - Velocidad: 38400 baud
-- Salida: GGA a 10 Hz
+- Salida: `$GCGGA` a 10 Hz
 
 ### I²C IMU
 
 - ESP32-S3 ↔ BNO085
 - Velocidad: 100 kHz
+- Dirección: `0x4B` (sin cambios)
 
 ## Posicionamiento
 
@@ -125,35 +126,43 @@ Ubicación:
 
 - Integrados en el módulo remoto asociado al BNO085
 
-### LED 1 — POWER
+### LED 1 — GPIO4 / LED_RED
 
-- Apagado → Sin alimentación
-- Encendido → Sistema operativo
+- Apagado → Sin fix GNSS válido
+- Parpadeo → PPP convergiendo
+- Encendido → GNSS válido/PPP estable
 
-### LED 2 — GNSS
+### LED 2 — GPIO5 / LED_GREEN
 
-- Apagado → Sin solución
-- Parpadeo lento → GPS autónomo
-- 2 destellos → SBAS
-- 3 destellos → Galileo HAS
-- Encendido fijo → RTK FIX
+- Apagado → MOVING
+- Parpadeo lento → AVERAGING
+- Encendido fijo → LOCKED válido
 
 ## Cableado IMU
 
 Conector:
 
 - RJ45 (CAT5e/CAT6)
+- **Custom BNO085/LED — NO ETHERNET** (no conectar a PoE/equipos Ethernet)
 
 Asignación:
 
-- Pin 1: SDA
+- Pin 1: +5 V (solo a VIN/5V del breakout Adafruit BNO085)
 - Pin 2: GND
-- Pin 3: SCL
-- Pin 4: +3V3
-- Pin 5: +3V3
+- Pin 3: SDA
+- Pin 4: LED1 (GPIO4 / LED_RED)
+- Pin 5: LED2 (GPIO5 / LED_GREEN)
 - Pin 6: GND
-- Pin 7: LED_POWER
-- Pin 8: LED_GNSS
+- Pin 7: SCL
+- Pin 8: GND
+
+Guía de instalación:
+
+- Usar pares trenzados donde sea práctico.
+- Mantener el arnés lejos de cableado de potencia de bomba/motor.
+- Cruzar potencia y señal a ~90° cuando aplique.
+- Añadir desacoplo local en el breakout (100 nF + 10–100 µF).
+- Verificar continuidad pin-a-pin antes de energizar.
 
 ## Software
 
@@ -169,7 +178,7 @@ Asignación:
 
 ### Estado OUTPUT
 
-- Mantener salida GGA a 10 Hz al Dynatest
+- Mantener salida `$GCGGA` a 10 Hz al Dynatest cuando GNSS esté fresco y válido
 
 ## Fases del proyecto
 

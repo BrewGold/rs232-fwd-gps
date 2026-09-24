@@ -24,7 +24,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
         │
         ├─ I2C ──► BNO085 (experimental)
         │
-        ├─ GPIO ──► LED_POWER / LED_GNSS
+        ├─ GPIO ──► LED1(GPIO4) / LED2(GPIO5)
         │
         └─ UART2 (38400) ─► MAX3232 ─► Dynatest FWD (GGA 10 Hz)
 ```
@@ -45,7 +45,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 - Enlace: UART2 + MAX3232
 - Baudrate: 38400
-- Trama: NMEA GGA
+- Trama: NMEA **$GCGGA** generada por el firmware
 - Tasa: 10 Hz
 
 ### 3.3 ESP32-S3 ↔ BNO085
@@ -101,29 +101,38 @@ Notas de implementación:
 
 ## 7. LEDs de estado
 
-### LED_POWER
+### LED1 (GPIO4 / LED_RED)
 
-- OFF: sin alimentación
-- ON fijo: sistema activo
+- OFF: sin fix GNSS válido
+- Parpadeo: PPP convergiendo
+- ON fijo: GNSS válido / PPP estable
 
-### LED_GNSS
+### LED2 (GPIO5 / LED_GREEN)
 
-- OFF: sin solución
-- Parpadeo lento: autónomo
-- 2 destellos periódicos: SBAS
-- 3 destellos periódicos: Galileo HAS
-- ON fijo: RTK FIX
+- OFF: MOVING
+- Parpadeo lento: AVERAGING
+- ON fijo: LOCKED válido
 
 ## 8. Cableado RJ45 (módulo remoto)
 
-- Pin 1: SDA
+**Custom BNO085/LED — NO ETHERNET** (no conectar a PoE/equipos Ethernet).
+
+- Pin 1: +5 V (solo a VIN/5V del breakout Adafruit BNO085)
 - Pin 2: GND
-- Pin 3: SCL
-- Pin 4: +3V3
-- Pin 5: +3V3
+- Pin 3: SDA
+- Pin 4: LED1 (GPIO4 / LED_RED)
+- Pin 5: LED2 (GPIO5 / LED_GREEN)
 - Pin 6: GND
-- Pin 7: LED_POWER
-- Pin 8: LED_GNSS
+- Pin 7: SCL
+- Pin 8: GND
+
+Notas de instalación:
+
+- I2C del BNO085 se opera a 100 kHz.
+- Mantener el arnés lejos de cableado de potencia de bomba/motor.
+- Cruzar potencia y señal a ~90° cuando sea necesario.
+- Añadir desacoplo local en el breakout (100 nF + 10–100 µF).
+- Verificar continuidad pin a pin antes de energizar.
 
 ## 9. Fases y criterio de aceptación
 
@@ -147,7 +156,7 @@ Objetivo:
 Aceptación:
 
 - Entrada RTCM efectiva al UM980.
-- Transiciones de calidad reflejadas en LED_GNSS.
+- Transiciones de calidad reflejadas en LED1 (GPIO4).
 
 ### Fase 3
 

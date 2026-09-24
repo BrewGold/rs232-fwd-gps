@@ -1,5 +1,5 @@
 MANUAL OPERATIVO  
-simpleRTK3B Budget + ESP32-S3 UNO + FWD GPGGA + USB2/RS232 + Galileo HAS
+simpleRTK3B Budget + ESP32-S3 UNO + FWD GCGGA + USB2/RS232 + Galileo HAS
 
 Versión: 1.1  
 Fecha: 17/09/2026  
@@ -17,7 +17,7 @@ Implementar y validar un sistema donde:
 - COM3 entrega GGA, VTG/RMC y, durante la prueba HAS, PPPNAVA.
 - COM1 / USB GPS se utiliza para configuración, diagnóstico y observación local.
 - ESP32 procesa posición, velocidad, offset y lógica detenido/promedio 15 s.
-- ESP32 reenvía GPGGA por:
+- ESP32 reenvía GCGGA por:
   - COM2 (RX2) del RTK3B para visualización por USB2.
   - MAX3232 para salida RS232 al Dynatest, opcional.
 - En detenido, salida promediada (15 s) a 10 Hz.
@@ -68,8 +68,8 @@ Durante una prueba HAS:
 
 - COM1 muestra los comandos, respuestas y diagnósticos locales.
 - COM3 lleva los mismos diagnósticos necesarios hacia el ESP32.
-- COM2 queda reservado para el retorno GPGGA del ESP32.
-- Dynatest recibe únicamente GPGGA a 38400 baudios y 10 Hz.
+- COM2 queda reservado para el retorno GCGGA del ESP32.
+- Dynatest recibe únicamente GCGGA a 38400 baudios y 10 Hz.
 
 ====================================================
 
@@ -328,8 +328,8 @@ Parámetros críticos del enlace operativo:
 | USB GPS / COM1 | OK, NMEA nativo, PPPNAVA, BESTNAVA | Configurar y verificar HAS |
 | COM3 / TX3 | GGA, VTG/RMC, PPPNAVA, BESTNAVA | Alimentar ESP32 y transportar diagnóstico |
 | USB debug ESP32 | GGA recibida, estado PPPNAVA bruto, INST/AVG15s | Validar lógica interna |
-| USB2 / COM2 | GPGGA del ESP32 a 10 Hz, sin mezcla | Validar retorno FWD |
-| Dynatest / RS232 | Solo GPGGA a 38400 y 10 Hz | Validar entrada del Compact15 |
+| USB2 / COM2 | GCGGA del ESP32 a 10 Hz, sin mezcla | Validar retorno FWD |
+| Dynatest / RS232 | Solo GCGGA a 38400 y 10 Hz | Validar entrada del Compact15 |
 
 Ejemplo de líneas que deben verse en COM1 y COM3 durante la prueba:
 
@@ -369,9 +369,9 @@ Criterio de aceptación:
 - COM1 y COM3 muestran PPPNAVA/BESTNAVA durante la prueba HAS.
 - El estado PPP_CONVERGING queda registrado.
 - El estado estable queda registrado con texto real del UM980.
-- El ESP32 mantiene la salida GPGGA aunque el estado PPP sea desconocido.
+- El ESP32 mantiene la salida GCGGA aunque el estado PPP sea desconocido.
 - USB2 queda limpio y estable a 10 Hz.
-- Dynatest recibe solo GPGGA a 38400.
+- Dynatest recibe solo GCGGA a 38400.
 - No hay doble aplicación del offset.
 
 ====================================================
@@ -414,7 +414,7 @@ Caso F: No entra en AVG15s
 Caso G: Dynatest no recibe datos
 - Confirmar MAX3232 y cruce TX/RX.
 - Confirmar 38400, 8N1.
-- Confirmar que el firmware genera GPGGA con checksum.
+- Confirmar que el firmware genera GCGGA con checksum.
 - Confirmar que COM2 no está conectado directamente al Dynatest por error.
 
 ====================================================
@@ -523,8 +523,8 @@ Validación:
 [ ] ESP32 registra PPPNAVA sin reenviarlo al Dynatest  
 [ ] ESP32 muestra OUT[INST] en movimiento  
 [ ] ESP32 muestra OUT[AVG15s] detenido  
-[ ] USB2 muestra GPGGA a 10 Hz  
-[ ] Dynatest recibe GPGGA a 38400  
+[ ] USB2 muestra GCGGA a 10 Hz  
+[ ] Dynatest recibe GCGGA a 38400  
 [ ] RS232 externo OK  
 
 Resultado final:

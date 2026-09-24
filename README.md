@@ -47,6 +47,7 @@ Flujo principal:
 
 - `docs/functional-spec-v1.0.md`: especificación funcional completa.
 - `docs/system-architecture.md`: detalle de arquitectura y comunicaciones.
+- `firmware/arduino/`: sketches Arduino (incluye `rs232_fwd_gps_final_v_0_99.ino` histórico y `rs232_fwd_gps_rev_1_0.ino`).
 - `firmware/esp32-s3/`: base de firmware modular.
 
 ## Roadmap
