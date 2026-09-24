@@ -64,17 +64,18 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 - Se actualiza historial para detección de parada.
 - Se mantiene salida `$GCGGA` 10 Hz.
 
-### STOPPED
+### AVERAGING
 
 - Se detecta parada por umbral de velocidad o desplazamiento.
 - Se activa ventana de muestreo de 15 s.
 - Se calculan medias de latitud, longitud y altitud.
+- El LED2 (`GPIO5`) parpadea mientras la ventana sigue abierta.
 
-### OUTPUT
+### LOCKED
 
 - Se publica `$GCGGA` a 10 Hz usando la mejor coordenada disponible.
 - Mientras persista parada se puede mantener la coordenada promediada.
-- Al reanudar movimiento, volver a solución instantánea.
+- Si reaparece movimiento o cambio posicional suficiente, volver a `MOVING`.
 - Si la GGA expira, la salida se silencia.
 
 ## 5. Selección de calidad GNSS
