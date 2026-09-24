@@ -1,4 +1,5 @@
 /*
+ * HISTORICAL NOTE: ESP32-S3-specific sketch kept only for reference.
  * RS232 FWD GPS v0.9.9 MADRID FINAL - ESP32-S3 (UM980 HAS) + BNO085 + Dynatest FWD
  *
  * Hardware:

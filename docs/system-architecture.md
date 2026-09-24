@@ -2,171 +2,141 @@
 
 ## 1. Resumen
 
-El sistema desacopla adquisición GNSS, lógica de estado y salida serial hacia Dynatest FWD.
+La arquitectura real del proyecto se basa en **Arduino UNO R4 WiFi** como controlador principal, con GNSS por `Serial1`, IMU BNO085 por `Wire` y salida NMEA para Dynatest por `Serial`/USB CDC cuando se necesita un flujo limpio.
 
 Bloques principales:
 
 1. Receptor GNSS (UM980 / simpleRTK3B Budget)
-2. Controlador ESP32-S3
-3. Interfaz RS232 (MAX3232)
-4. IMU BNO085/BNO086 (experimental)
-5. LEDs externos de estado
+2. Arduino UNO R4 WiFi (RA4M1)
+3. IMU BNO085/BNO086
+4. LEDs externos de estado
+5. Interfaz de salida Dynatest sobre USB CDC
 
 ## 2. Diagrama lógico
 
 ```text
-NTRIP caster (Internet)
+simpleRTK3B Budget / UM980
         │
-        ▼
-ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
-        │                                    │
-        │                                    └─ NMEA (GGA/RMC) ──► ESP32-S3 UART1
-        │
-        ├─ I2C ──► BNO085 (experimental)
-        │
-        ├─ GPIO ──► LED_POWER / LED_GNSS
-        │
-        └─ UART2 (38400) ─► MAX3232 ─► Dynatest FWD (GGA 10 Hz)
+        └─ NMEA GGA/RMC + #PPPNAVA ──► Serial1 (D0/D1) ──► Arduino UNO R4 WiFi (RA4M1)
+                                                      │
+                                                      ├─ Wire @ 100 kHz ──► BNO085 remoto
+                                                      ├─ GPIO D6/D7 ──────► LED1 / LED2
+                                                      └─ Serial (USB CDC) ─► Dynatest / host NMEA limpio
 ```
 
 ## 3. Interfaz de datos
 
-### 3.1 GNSS ↔ ESP32-S3
+### 3.1 GNSS ↔ UNO R4 WiFi
 
-- Enlace: UART1
-- Baudrate: 115200
-- Entrada a ESP32-S3:
-  - NMEA GGA
-  - NMEA RMC
-- Salida desde ESP32-S3:
-  - RTCM (cuando hay NTRIP)
+- Enlace: `Serial1`
+- Pines: `D0/RX`, `D1/TX`
+- Baudrate: `115200`
+- Entrada al firmware:
+  - GGA (`$GPGGA`, `$GNGGA`, `$GCGGA`)
+  - RMC (`$GPRMC`, `$GNRMC`)
+  - PPP/HAS (`#PPPNAVA`)
 
-### 3.2 ESP32-S3 ↔ Dynatest
+### 3.2 UNO R4 WiFi ↔ Dynatest
 
-- Enlace: UART2 + MAX3232
-- Baudrate: 38400
-- Trama: NMEA GGA
-- Tasa: 10 Hz
+- Enlace base implementado: `Serial` / USB CDC
+- Sentencia emitida: `$GCGGA`
+- Tasa: `10 Hz`
+- Checksum: XOR
+- Terminación: `CRLF`
 
-### 3.3 ESP32-S3 ↔ BNO085
+#### Limitación física
 
-- Enlace: I²C (100 kHz)
-- Uso actual: telemetría experimental de rumbo
-- Impacto en coordenada: ninguno en v1.0
+El UNO R4 WiFi no dispone de un `Serial2` equivalente al usado por el firmware histórico ESP32. Por ello:
+
+- `Serial1` queda reservado para GNSS;
+- `Serial` puede llevar diagnóstico **o** NMEA limpio, no ambos a la vez;
+- para un segundo enlace físico dedicado a Dynatest se requiere hardware externo adicional.
+
+### 3.3 UNO R4 WiFi ↔ BNO085
+
+- Enlace: `Wire`
+- Velocidad: `100 kHz`
+- Bus elegido: el I2C principal expuesto en los headers `SDA/SCL`, adecuado para el arnés RJ45/UTP remoto.
 
 ## 4. Máquina de estados
 
 ### MOVING
 
 - Se ingiere GNSS continuo.
-- Se actualiza historial para detección de parada.
-- Se mantiene salida GGA 10 Hz.
+- Se mantiene salida `$GCGGA` a 10 Hz si la GGA está fresca.
+- Se aplica offset instantáneo solo si hay yaw válido.
 
-### STOPPED
+### AVERAGING
 
-- Se detecta parada por umbral de velocidad o desplazamiento.
-- Se activa ventana de muestreo de 15 s.
-- Se calculan medias de latitud, longitud y altitud.
+- Se confirma parada tras 2 s bajo `0.20 m/s`.
+- Se acumulan muestras durante 15 s.
+- Se almacenan latitud, longitud, altitud y yaw cuando existe.
 
-### OUTPUT
+### LOCKED
 
-- Se publica GGA a 10 Hz usando la mejor coordenada disponible.
-- Mientras persista parada se puede mantener la coordenada promediada.
-- Al reanudar movimiento, volver a solución instantánea.
+- Se publica la coordenada promediada.
+- Se mantiene la salida a 10 Hz mientras la GGA siga fresca.
+- Se abandona el estado por velocidad `> 0.30 m/s` o por desplazamiento `> 1 m` comparando coordenadas del mismo marco (`raw` con `raw`).
 
-## 5. Selección de calidad GNSS
+## 5. Calidad GNSS y PPP/HAS
 
-Orden de prioridad:
+- `LOCKED` válido → prioridad máxima para la salida.
+- `PPP_ESTABLE` → fixQ de salida preferente.
+- `PPP_CONVERGING` → fixQ intermedio.
+- autónomo válido → fixQ básico.
 
-1. RTK FIX
-2. Galileo HAS
-3. SBAS (EGNOS)
-4. Autónomo
+Para evitar falsos positivos, el parser PPP/HAS solo procesa líneas que **empiezan por `#PPPNAVA`**.
 
-Regla:
+## 6. HDOP y frescura
 
-- Siempre emitir en GGA la mejor solución válida disponible según prioridad.
+- El HDOP se copia desde el campo 8 de la GGA recibida.
+- Si el campo falta o es inválido, se usa el fallback documentado `1.0`.
+- Si la GGA deja de estar fresca, se silencia la salida.
 
-## 6. Detección de parada
+## 7. LEDS de estado
 
-Criterios (OR):
+### LED1 (D6)
 
-- Velocidad < 0,2 km/h durante al menos 2 s.
-- Desplazamiento < 0,10 m durante al menos 2 s.
+- OFF: sin GGA fresca
+- Parpadeo: PPP convergiendo
+- ON fijo: GNSS válido / PPP estable
 
-Notas de implementación:
+### LED2 (D7)
 
-- Evaluar condición a 10 Hz.
-- Usar ventana deslizante temporal para evitar rebotes.
-
-## 7. LEDs de estado
-
-### LED_POWER
-
-- OFF: sin alimentación
-- ON fijo: sistema activo
-
-### LED_GNSS
-
-- OFF: sin solución
-- Parpadeo lento: autónomo
-- 2 destellos periódicos: SBAS
-- 3 destellos periódicos: Galileo HAS
-- ON fijo: RTK FIX
+- OFF: `MOVING`
+- Parpadeo: `AVERAGING`
+- ON fijo: `LOCKED`
 
 ## 8. Cableado RJ45 (módulo remoto)
 
-- Pin 1: SDA
-- Pin 2: GND
-- Pin 3: SCL
-- Pin 4: +3V3
-- Pin 5: +3V3
-- Pin 6: GND
-- Pin 7: LED_POWER
-- Pin 8: LED_GNSS
+Etiqueta obligatoria:
 
-## 9. Fases y criterio de aceptación
+- **`BNO085/LED — NO ETHERNET`**
 
-### Fase 1
+Pinout:
 
-Objetivo:
+- Pin 1: `+5V` solo a `VIN/5V` del breakout Adafruit
+- Pin 2: `GND`
+- Pin 3: `SDA`
+- Pin 4: `LED1`
+- Pin 5: `LED2`
+- Pin 6: `GND`
+- Pin 7: `SCL`
+- Pin 8: `GND`
 
-- Validar enlace serial con Dynatest.
+Buenas prácticas:
 
-Aceptación:
+- UTP directo pin‑a‑pin
+- pares trenzados cuando sea práctico
+- separado del cableado de bomba/motor
+- cruces a ~90°
+- desacoplo local `100 nF + 10–100 µF`
+- prueba de continuidad antes de energizar
+- nunca Ethernet / nunca PoE
 
-- GGA estable a 10 Hz, 38400 baud.
-- Dynatest recibe y parsea sin errores.
+## 9. Changelog Rev.1 UNO R4 WiFi
 
-### Fase 2
-
-Objetivo:
-
-- Integrar NTRIP y flujo RTCM.
-
-Aceptación:
-
-- Entrada RTCM efectiva al UM980.
-- Transiciones de calidad reflejadas en LED_GNSS.
-
-### Fase 3
-
-Objetivo:
-
-- Activar promedio de 15 s al detenerse.
-
-Aceptación:
-
-- Cálculo de 150 muestras válidas.
-- Menor dispersión posicional en parada frente a instantáneo.
-
-### Fase 4
-
-Objetivo:
-
-- Integrar BNO085 + módulo remoto LED/RJ45.
-
-Aceptación:
-
-- Telemetría IMU operativa.
-- LEDs operativos en gabinete remoto.
+- Se migra la Rev.1 al hardware real Arduino UNO R4 WiFi.
+- Se sustituyen referencias activas a ESP32-S3 como MCU principal por la arquitectura RA4M1 real.
+- Se elimina el uso de `Serial2` y de la firma ESP32 `Wire1.begin(sda, scl, freq)`.
+- Se fija la salida a `$GCGGA` a 10 Hz con HDOP real, checksum y timeout de frescura.

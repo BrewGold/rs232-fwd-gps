@@ -1,541 +1,206 @@
-MANUAL OPERATIVO  
-simpleRTK3B Budget + ESP32-S3 UNO + FWD GPGGA + USB2/RS232 + Galileo HAS
+# MANUAL OPERATIVO
 
-Versión: 1.1  
-Fecha: 17/09/2026  
-Preparado para: Operación técnica / campo  
-Referencia base: User Guide simpleRTK3B Budget (ArduSimple, mod. 2026/04/05)
+## simpleRTK3B Budget + Arduino UNO R4 WiFi + FWD GCGGA + BNO085 remoto
 
-====================================================
+Versión: 1.2
 
-1. OBJETIVO
------------
+Fecha: 24/09/2026
+
+Preparado para: operación técnica / campo
+
+---
+
+## 1. Objetivo
 
 Implementar y validar un sistema donde:
 
-- simpleRTK3B Budget / UM980 entrega GNSS al ESP32 por COM3 (TX3/RX3).
-- COM3 entrega GGA, VTG/RMC y, durante la prueba HAS, PPPNAVA.
-- COM1 / USB GPS se utiliza para configuración, diagnóstico y observación local.
-- ESP32 procesa posición, velocidad, offset y lógica detenido/promedio 15 s.
-- ESP32 reenvía GPGGA por:
-  - COM2 (RX2) del RTK3B para visualización por USB2.
-  - MAX3232 para salida RS232 al Dynatest, opcional.
-- En detenido, salida promediada (15 s) a 10 Hz.
-- Galileo HAS se configura en el UM980 y se observa simultáneamente por COM1 y COM3.
+- el **simpleRTK3B Budget / UM980** entrega GNSS al **Arduino UNO R4 WiFi** por `Serial1`;
+- el UNO R4 WiFi procesa posición, velocidad, offset y lógica detenido/promedio 15 s;
+- el UNO R4 WiFi genera **`$GCGGA` a 10 Hz** mientras la GGA esté válida y fresca;
+- el **BNO085** remoto aporta yaw por I2C para aplicar el offset antena→pistón;
+- los **LED1/LED2** externos muestran estado GNSS y estado de movimiento.
 
-Importante:
-- La arquitectura de HAS está preparada, pero el estado final exacto emitido por
-  PPPNAVA debe confirmarse con una captura real del UM980 instalado.
-- No asumir que el estado final se llama PPP_VALID. El firmware debe conservar y
-  registrar la línea PPPNAVA real hasta cerrar el parser definitivo.
+### Limitación real del hardware
 
-====================================================
+El UNO R4 WiFi solo dispone de una UART hardware externa principal (`Serial1`) además del USB CDC (`Serial`). Por tanto:
 
-2. MAPEO DE PUERTOS (RTK3B BUDGET)
------------------------------------
+- `Serial1` queda dedicado al GNSS;
+- `Serial`/USB CDC se usa **o bien** para diagnóstico **o bien** para salida Dynatest limpia;
+- si se necesitan dos enlaces físicos simultáneos sin conmutación, hace falta hardware externo adicional.
 
-Tabla 1. Puertos internos y externos
+---
+
+## 2. Mapeo de puertos
+
+### UNO R4 WiFi
+
+| Interfaz | Uso | Ajuste |
+|---|---|---|
+| `Serial1` | GNSS UM980 | `115200`, D0/D1 |
+| `Serial` | Diagnóstico USB **o** Dynatest NMEA limpio | USB CDC |
+| `Wire` | BNO085 remoto | `100 kHz`, SDA/SCL |
+| `D6` | LED1 | Estado GNSS/PPP |
+| `D7` | LED2 | Estado MOVING/AVERAGING/LOCKED |
+
+### UM980
 
 | Interfaz física RTK3B | Puerto UM980 | Uso recomendado |
 |---|---|---|
-| USB GPS | COM1 | Configuración, comandos y diagnóstico HAS |
-| XBee socket + TX2/RX2 | COM2 | Retorno FWD + monitor por USB2 |
-| Pixhawk + TX3/RX3 | COM3 | GGA/VTG/RMC/PPPNAVA hacia ESP32 |
+| USB GPS | COM1 | Configuración y observación local |
+| Pixhawk + TX3/RX3 | COM3 | GGA/RMC/PPPNAVA hacia el UNO R4 |
 
-Notas clave:
-- Regla UART: TX origen -> RX destino.
-- No inyectar datos hacia TX2/TX3 salvo que el procedimiento lo requiera.
-- Para monitor limpio en USB2, COM2 debe quedar sin NMEA propio.
-- COM1 y COM3 deben recibir los diagnósticos HAS durante la prueba.
-- El ESP32 debe ignorar PPPNAVA/BESTNAVA para la salida Dynatest; solo debe
-  reenviar/generar GPGGA.
+Notas:
 
-====================================================
+- Regla UART: `TX origen -> RX destino`.
+- El firmware Rev.1 **no usa `Serial2`** porque no existe en el UNO R4 WiFi como segundo enlace UART externo disponible para este montaje.
 
-3. ARQUITECTURA DE SEÑAL
-------------------------
+---
 
-Flujo principal:
+## 3. Arnés RJ45/UTP remoto
 
-1) RTK3B COM3 TX3 -> ESP32 GNSS RX  
-2) COM3 entrega GGA + VTG/RMC + PPPNAVA de diagnóstico  
-3) ESP32 procesa posición, velocidad, estado y offset  
-4) ESP32 OUT TX -> RTK3B COM2 RX2 (monitor USB2)  
-5) ESP32 OUT TX -> MAX3232 -> Dynatest Compact15 (RS232)  
-6) COM1 / USB GPS permite observar configuración y PPPNAVA directamente
+**Etiqueta obligatoria:** `BNO085/LED — NO ETHERNET`
 
-Durante una prueba HAS:
+Asignación fija:
 
-- COM1 muestra los comandos, respuestas y diagnósticos locales.
-- COM3 lleva los mismos diagnósticos necesarios hacia el ESP32.
-- COM2 queda reservado para el retorno GPGGA del ESP32.
-- Dynatest recibe únicamente GPGGA a 38400 baudios y 10 Hz.
+1. `+5V` solo a `VIN/5V` del breakout Adafruit BNO085
+2. `GND`
+3. `SDA`
+4. `LED1`
+5. `LED2`
+6. `GND`
+7. `SCL`
+8. `GND`
 
-====================================================
+### Reglas de seguridad
 
-4. REQUISITOS PREVIOS
----------------------
+- Nunca conectar este RJ45 a Ethernet ni PoE.
+- UTP directo pin‑a‑pin.
+- Aprovechar pares trenzados cuando sea práctico.
+- Mantener distancia respecto al cableado de bomba/motor.
+- Si hay cruces inevitables, hacerlos a ~90°.
+- Añadir desacoplo local de `100 nF + 10–100 µF` junto al breakout.
+- Hacer prueba de continuidad antes de energizar.
 
-- Antena GNSS conectada antes de energizar.
-- Vista de cielo adecuada y sin obstrucciones.
-- Alimentación estable.
-- GND común entre RTK3B, ESP32 y MAX3232.
-- Firmware UM980 compatible con E6-HAS.
-- PC con monitor serie configurado a 115200, 8N1 y final de línea CR+LF.
-- Driver FTDI VCP instalado si PC no detecta puertos:
-  https://ftdichip.com/drivers/vcp-drivers/
+---
 
-Para una prueba HAS válida:
+## 4. Preparación del UM980
 
-- No activar NTRIP/RTCM externo durante la comprobación.
-- Mantener la antena fija y con cielo abierto.
-- No apagar el receptor durante la convergencia.
-- Registrar el texto completo de PPPNAVA y BESTNAVA.
+Conectarse por USB GPS (COM1), normalmente a `115200 8N1`, y habilitar como mínimo:
 
-====================================================
-
-5. CONFIGURACIÓN RTK3B POR COMANDOS (SIN GUI)
-----------------------------------------------
-
-Conectarse por USB GPS (COM1), típicamente a 115200, 8N1, CR+LF.
-Enviar los comandos uno por uno y comprobar la respuesta del receptor.
-
-5.1 Configurar COM3 para alimentar ESP32
-
-Comandos:
-
+```text
 GPGGA COM3 1
-GPVTG COM3 1
-GPRMC COM3 1
-
-Resultado esperado:
-- COM3 emite posición y calidad de fix.
-- COM3 emite velocidad/rumbo para detectar detenido/movimiento.
-
-5.2 Configurar diagnóstico HAS en COM3
-
-Para que el ESP32 pueda registrar el estado PPP/HAS que llega desde el UM980:
-
-PPPNAVA COM3 1
-BESTNAVA COM3 1
-
-Si el firmware del UM980 no acepta la forma con puerto, probar la sintaxis
-básica y verificar después con UNILOGLIST:
-
-PPPNAVA 1
-BESTNAVA 1
-
-Resultado esperado en COM3:
-
-$GPGGA,...
-$GPVTG,...
-$GPRMC,...
-#PPPNAVA,...
-#BESTNAVA,...
-
-El ESP32 debe procesar GGA/VTG/RMC y conservar PPPNAVA/BESTNAVA como diagnóstico.
-No debe reenviar esas líneas al Dynatest.
-
-5.3 Configurar diagnóstico HAS en COM1 / USB GPS
-
-Para observar el estado directamente en el monitor serie del PC:
-
-GPGGA COM1 1
-GPGSA COM1 1
-GPGSV COM1 1
-GPGST COM1 1
-GPRMC COM1 1
-PPPNAVA COM1 1
-BESTNAVA COM1 1
-
-COM1 debe mostrar las respuestas a los comandos y, a continuación, las líneas
-NMEA y de diagnóstico del UM980.
-
-5.4 Limpiar COM2 para evitar mezcla en USB2
-
-Comandos:
-
-GPGGA COM2 0
-GPGSA COM2 0
-GPGSV COM2 0
-GPGST COM2 0
-GPRMC COM2 0
-GPVTG COM2 0
-PPPNAVA COM2 0
-BESTNAVA COM2 0
-
-Resultado esperado:
-- COM2 queda sin NMEA ni diagnóstico propio del RTK3B.
-- USB2 muestra principalmente lo que inyecta el ESP32.
-
-5.5 Activar Galileo HAS en Budget
-
-Comandos:
-
-CONFIG PPP ENABLE E6-HAS
-CONFIG PPP DATUM WGS84
-CONFIG PPP CONVERGE 50 50
-CONFIG SIGNALGROUP 2
-
-Guardar:
-
-SAVECONFIG
-
-Desactivar PPP/HAS si se necesita volver a GNSS normal:
-
-CONFIG PPP DISABLE
-SAVECONFIG
-
-====================================================
-
-6. SECUENCIA COMPLETA HAS (COPIAR/PEGAR)
------------------------------------------
-
-Conectado a COM1 / USB GPS, enviar una línea cada vez:
-
-GPGGA COM3 1
-GPVTG COM3 1
 GPRMC COM3 1
 PPPNAVA COM3 1
-BESTNAVA COM3 1
+SAVECONFIG
+```
 
+Opcionalmente, para observación local por COM1:
+
+```text
 GPGGA COM1 1
-GPGSA COM1 1
-GPGSV COM1 1
-GPGST COM1 1
 GPRMC COM1 1
 PPPNAVA COM1 1
-BESTNAVA COM1 1
-
-GPGGA COM2 0
-GPGSA COM2 0
-GPGSV COM2 0
-GPGST COM2 0
-GPRMC COM2 0
-GPVTG COM2 0
-PPPNAVA COM2 0
-BESTNAVA COM2 0
-
-CONFIG PPP ENABLE E6-HAS
-CONFIG PPP DATUM WGS84
-CONFIG PPP CONVERGE 50 50
-CONFIG SIGNALGROUP 2
 SAVECONFIG
+```
 
-UNILOGLIST
+### Importante
 
-UNILOGLIST se utiliza para confirmar qué mensajes están activos y en qué puerto.
-La respuesta exacta puede variar según el firmware del UM980.
+- El firmware procesa GGA/RMC con checksum válido.
+- El parser PPP/HAS **solo** procesa líneas que empiezan por `#PPPNAVA`.
+- No se deben clasificar mensajes arbitrarios solo por contener la cadena `HAS`.
 
-====================================================
+---
 
-7. QUÉ CAPTURAR PARA CERRAR EL PARSER HAS
-------------------------------------------
+## 5. Comportamiento funcional esperado
 
-La captura de campo es obligatoria antes de fijar definitivamente la clasificación
-PPP en el firmware.
+### 5.1 Movimiento
 
-7.1 Captura de convergencia
+- Mientras la GGA esté fresca, el firmware emite **`$GCGGA` a 10 Hz**.
+- Si el BNO085 entrega yaw válido, se aplica offset de `0.55 m` con bearing `yaw + 270°`.
+- Si no hay yaw válido, se emite la coordenada GNSS sin corregir.
 
-En COM1 o en el registro de COM3, esperar una línea que contenga:
+### 5.2 Detección de parada
 
-PPP_CONVERGING
+- Entrada a `AVERAGING` tras `2 s` por debajo de `0.20 m/s`.
+- Muestreo durante `15 s`.
+- Paso a `LOCKED` con posición media válida.
 
-Guardar 10-20 líneas completas consecutivas, incluyendo:
+### 5.3 Salida de lock
 
-#PPPNAVA,...
-#BESTNAVA,...
-#PPPNAVA,...
-#BESTNAVA,...
+- Salida a `MOVING` si la velocidad supera `0.30 m/s`.
+- Salida a `MOVING` si la distancia supera `1 m` comparando coordenadas del mismo marco (`raw` con `raw`).
 
-No modificar las líneas ni quitar checksums.
+### 5.4 Frescura y HDOP
 
-7.2 Captura estable
+- El HDOP de la salida proviene del campo 8 de la GGA de entrada.
+- Solo se usa fallback `1.0` si el campo no existe o es inválido.
+- Si la GGA deja de estar fresca, la salida se silencia.
 
-Después de dejar el receptor con cielo abierto el tiempo necesario, guardar otras
-10-20 líneas completas cuando ya no aparezca PPP_CONVERGING.
+---
 
-No asumir previamente que el estado final se llama PPP_VALID. Puede variar según
-el build del UM980. La clasificación final debe basarse en el texto real capturado.
+## 6. Modo USB CDC
 
-7.3 Información adicional
+### Modo A — Diagnóstico
 
-Incluir una vez en la captura:
+Usar `Serial` para ver mensajes de diagnóstico por USB.
 
-VERSIONA
-UNILOGLIST
+### Modo B — Dynatest limpio
 
-Guardar también:
-- versión/build del UM980;
-- fecha y hora de la prueba;
-- ubicación aproximada;
-- si había o no NTRIP/RTCM;
-- calidad de cielo y antena utilizada.
+Usar `Serial` como flujo NMEA limpio hacia el enlace Dynatest/host.
 
-====================================================
+### Restricción
 
-8. ESTADOS HAS ESPERADOS
-------------------------
+No usar el mismo `Serial`/USB CDC simultáneamente para logs y para NMEA limpio.
 
-Estados de diagnóstico que pueden observarse:
+---
 
-- SIN_PPP: solución autónoma o sin solución PPP/HAS confirmada.
-- PPP_CONVERGING: PPP/HAS está calculando y convergiendo.
-- PPP_ESTABLE: estado PPP estable confirmado por captura real del equipo.
-- PPP_DESCONOCIDO: llega PPPNAVA, pero el literal no coincide con los estados
-  conocidos y debe conservarse para revisión.
+## 7. Checklist operativo en banco/campo
 
-Regla de ingeniería:
+### Antes de energizar
 
-- PPP_CONVERGING se puede reconocer por el literal recibido.
-- El estado estable no debe llamarse PPP_VALID hasta confirmarlo en campo.
-- GGA fixQ se conserva inicialmente tal como lo entrega el UM980.
-- No inventar un fixQ NMEA para HAS sin una política documentada y validada.
+- [ ] Antena GNSS conectada
+- [ ] Continuidad del arnés RJ45 verificada
+- [ ] RJ45 etiquetado `NO ETHERNET`
+- [ ] Breakout BNO085 alimentado solo por `VIN/5V`
+- [ ] GND común correcto
+- [ ] Bomba/motor apagados para la primera validación
 
-====================================================
+### Validación inicial
 
-9. CONFIGURACIÓN ESP32 (REFERENCIA DE FIRMWARE)
-------------------------------------------------
+- [ ] `Serial1` recibe GGA/RMC desde COM3 del UM980
+- [ ] BNO085 responde por `Wire` a `100 kHz`
+- [ ] LED1 y LED2 responden según estado
+- [ ] Se observa `$GCGGA` con checksum y `CRLF`
+- [ ] Tasa de salida de `10 Hz`
+- [ ] HDOP cambia con el valor real de entrada
+- [ ] Sin salida cuando vence el timeout de frescura
 
-Firmware operativo de referencia:
+### Validación funcional
 
-firmware/arduino/firmware_arduino_rs232_fwd_gps_unificado.ino
+- [ ] `$GCGGA` en movimiento
+- [ ] `$GCGGA` durante parada y `LOCKED`
+- [ ] Confirmación de parada a `2 s`
+- [ ] Promedio correcto a `15 s`
+- [ ] Reentrada a `MOVING` al superar `0.30 m/s`
+- [ ] Reentrada a `MOVING` al desplazar más de `1 m`
 
-Draft separado para evolución:
+### Interferencia electromagnética
 
-firmware/arduino/rs232_fwd_gps_draft_v0_9.ino
+- [ ] Repetir prueba con bomba apagada
+- [ ] Repetir prueba con bomba encendida
+- [ ] Confirmar que el I2C y la salida NMEA se mantienen estables
 
-El draft no reemplaza al firmware operativo y queda pendiente de datos reales
-de PPPNAVA, parser definitivo, BNO085, offset y GGA final.
+---
 
-Parámetros críticos del enlace operativo:
+## 8. Sketch objetivo y referencias históricas
 
-- GNSS_BAUD = 115200 (igual a COM3).
-- OUT_BAUD = 38400 (Dynatest/COM2 según la arquitectura final).
-- AVG_WINDOW_MS = 15000.
-- OUT_PERIOD_MS = 100 (10 Hz).
-- Stop enter <= 0.20 m/s.
-- Stop exit >= 0.30 m/s.
-- Confirmación de detenido: 2 s.
+### Sketch objetivo real
 
-====================================================
+- `firmware/arduino/rs232_fwd_gps_uno_r4_wifi_rev_1_0.ino`
 
-10. QUÉ VER EN CADA MONITOR
----------------------------
-
-| Monitor | Qué debe verse | Objetivo |
-|---|---|---|
-| USB GPS / COM1 | OK, NMEA nativo, PPPNAVA, BESTNAVA | Configurar y verificar HAS |
-| COM3 / TX3 | GGA, VTG/RMC, PPPNAVA, BESTNAVA | Alimentar ESP32 y transportar diagnóstico |
-| USB debug ESP32 | GGA recibida, estado PPPNAVA bruto, INST/AVG15s | Validar lógica interna |
-| USB2 / COM2 | GPGGA del ESP32 a 10 Hz, sin mezcla | Validar retorno FWD |
-| Dynatest / RS232 | Solo GPGGA a 38400 y 10 Hz | Validar entrada del Compact15 |
-
-Ejemplo de líneas que deben verse en COM1 y COM3 durante la prueba:
-
-$GPGGA,...
-$GPVTG,...
-$GPRMC,...
-#PPPNAVA,...PPP_CONVERGING...
-#BESTNAVA,...
-
-Cuando exista una solución estable, conservar también 10-20 líneas reales del
-estado posterior para cerrar el parser definitivo.
-
-====================================================
-
-11. PROCEDIMIENTO DE VALIDACIÓN (PASO A PASO)
-----------------------------------------------
-
-1. Verificar antena, alimentación y cielo abierto.
-2. Conectar COM1 / USB GPS a 115200, 8N1, CR+LF.
-3. Ejecutar VERSIONA y UNILOGLIST; guardar la respuesta.
-4. Configurar COM3 con GGA + VTG/RMC.
-5. Activar PPPNAVA y BESTNAVA en COM1 y COM3.
-6. Limpiar COM2 y guardar la configuración.
-7. Activar HAS con los comandos de la sección 6.
-8. Confirmar PPP_CONVERGING en COM1 y COM3.
-9. Registrar 10-20 líneas consecutivas de PPPNAVA/BESTNAVA.
-10. Esperar la solución estable y registrar otras 10-20 líneas.
-11. Cargar el firmware operativo en el ESP32.
-12. Confirmar que el ESP32 ignora PPPNAVA/BESTNAVA para la salida Dynatest.
-13. En movimiento confirmar OUT[INST].
-14. Detener 2-3 s y confirmar OUT[AVG15s].
-15. Abrir USB2 y confirmar GPGGA a 10 Hz sin mezcla.
-16. Confirmar recepción RS232 en Dynatest.
-17. Solo después de la captura real, cerrar el parser definitivo de HAS.
-
-Criterio de aceptación:
-- COM1 y COM3 muestran PPPNAVA/BESTNAVA durante la prueba HAS.
-- El estado PPP_CONVERGING queda registrado.
-- El estado estable queda registrado con texto real del UM980.
-- El ESP32 mantiene la salida GPGGA aunque el estado PPP sea desconocido.
-- USB2 queda limpio y estable a 10 Hz.
-- Dynatest recibe solo GPGGA a 38400.
-- No hay doble aplicación del offset.
-
-====================================================
-
-12. TROUBLESHOOTING
--------------------
-
-Caso A: ESP32 no recibe GNSS
-- Revisar TX3 -> RX ESP32.
-- Revisar baud COM3 vs GNSS_BAUD.
-- Revisar GND común.
-- Confirmar que COM3 emite GGA con un adaptador/monitor apropiado.
-
-Caso B: No aparece PPPNAVA en COM1
-- Ejecutar PPPNAVA 1.
-- Comprobar la respuesta del comando.
-- Ejecutar UNILOGLIST.
-- Revisar versión/build con VERSIONA.
-
-Caso C: PPPNAVA aparece en COM1 pero no en COM3
-- Ejecutar PPPNAVA COM3 1.
-- Si devuelve error, probar PPPNAVA 1 y revisar UNILOGLIST.
-- Confirmar que el cable TX3 -> ESP32 no esté saturado por una velocidad incorrecta.
-
-Caso D: COM3 mezcla o satura el enlace
-- Mantener solo GGA, VTG/RMC y PPPNAVA durante la primera prueba.
-- No activar GSV de alta frecuencia en COM3 salvo necesidad.
-- El ESP32 debe ignorar mensajes no necesarios para el flujo de salida.
-
-Caso E: USB2 muestra tramas mezcladas
-- Desactivar NMEA y PPPNAVA/BESTNAVA de COM2.
-- Ejecutar SAVECONFIG.
-- Verificar que la inyección ESP32 entra por RX2.
-
-Caso F: No entra en AVG15s
-- Confirmar que llega VTG o RMC válido.
-- Revisar umbrales de velocidad.
-- Confirmar que no se esté usando un estado de velocidad obsoleto.
-
-Caso G: Dynatest no recibe datos
-- Confirmar MAX3232 y cruce TX/RX.
-- Confirmar 38400, 8N1.
-- Confirmar que el firmware genera GPGGA con checksum.
-- Confirmar que COM2 no está conectado directamente al Dynatest por error.
-
-====================================================
-
-13. BLOQUES RÁPIDOS (COPIAR/PEGAR)
------------------------------------
-
-13.1 Producción mínima sin HAS
-
-GPGGA COM3 1
-GPVTG COM3 1
-GPRMC COM3 1
-GPGGA COM2 0
-GPGSA COM2 0
-GPGSV COM2 0
-GPGST COM2 0
-GPRMC COM2 0
-GPVTG COM2 0
-PPPNAVA COM2 0
-BESTNAVA COM2 0
-SAVECONFIG
-
-13.2 Producción + HAS visible en COM1 y COM3
-
-GPGGA COM3 1
-GPVTG COM3 1
-GPRMC COM3 1
-PPPNAVA COM3 1
-BESTNAVA COM3 1
-GPGGA COM1 1
-GPGSA COM1 1
-GPGSV COM1 1
-GPGST COM1 1
-GPRMC COM1 1
-PPPNAVA COM1 1
-BESTNAVA COM1 1
-GPGGA COM2 0
-GPGSA COM2 0
-GPGSV COM2 0
-GPGST COM2 0
-GPRMC COM2 0
-GPVTG COM2 0
-PPPNAVA COM2 0
-BESTNAVA COM2 0
-CONFIG PPP ENABLE E6-HAS
-CONFIG PPP DATUM WGS84
-CONFIG PPP CONVERGE 50 50
-CONFIG SIGNALGROUP 2
-SAVECONFIG
-UNILOGLIST
-
-13.3 Desactivar diagnósticos después de capturar
-
-PPPNAVA COM1 0
-BESTNAVA COM1 0
-PPPNAVA COM3 0
-BESTNAVA COM3 0
-SAVECONFIG
-
-Si la sintaxis con puerto no es aceptada, utilizar la forma que indique
-UNILOGLIST y confirmar el resultado en COM1 y COM3.
-
-====================================================
-
-14. CHECKLIST DE CAMPO (IMPRIMIBLE)
-------------------------------------
-
-Datos de ensayo:
-- Fecha: __________________
-- Técnico: _______________
-- Ubicación: ______________
-- Firmware ESP32: _________
-- Firmware/build UM980: ___
-- Baud COM1: _____________
-- Baud COM3: _____________
-- Baud COM2: _____________
-
-Pre-check:
-[ ] Antena conectada antes de power  
-[ ] Cielo abierto suficiente  
-[ ] GND común confirmado  
-[ ] COM1 accesible por USB GPS  
-[ ] Firmware/build UM980 registrado  
-[ ] Sin NTRIP/RTCM externo durante prueba HAS  
-
-Configuración:
-[ ] COM3 con GGA + VTG/RMC  
-[ ] PPPNAVA activo en COM1  
-[ ] BESTNAVA activo en COM1  
-[ ] PPPNAVA activo en COM3  
-[ ] BESTNAVA activo en COM3  
-[ ] COM2 sin NMEA propio  
-[ ] COM2 sin PPPNAVA/BESTNAVA  
-[ ] HAS configurado  
-[ ] SAVECONFIG ejecutado  
-[ ] VERSIONA y UNILOGLIST guardados  
-
-Captura HAS:
-[ ] 10-20 líneas PPP_CONVERGING guardadas  
-[ ] 10-20 líneas estado estable guardadas  
-[ ] Checksums conservados  
-[ ] Estado final no asumido sin evidencia  
-
-Validación:
-[ ] ESP32 recibe GGA desde COM3  
-[ ] ESP32 registra PPPNAVA sin reenviarlo al Dynatest  
-[ ] ESP32 muestra OUT[INST] en movimiento  
-[ ] ESP32 muestra OUT[AVG15s] detenido  
-[ ] USB2 muestra GPGGA a 10 Hz  
-[ ] Dynatest recibe GPGGA a 38400  
-[ ] RS232 externo OK  
-
-Resultado final:
-[ ] APROBADO  
-[ ] OBSERVADO  
-
-Observaciones:
-____________________________________________________
-____________________________________________________
-____________________________________________________
-
-Firmas:
-Técnico: _____________________   Fecha: ___/___/____
-Supervisor: __________________   Fecha: ___/___/____
+### Sketches históricos conservados
+
+- `firmware/arduino/rs232_fwd_gps_final_v_0_99.ino`
+- `firmware/arduino/rs232_fwd_gps_draft_v0_9.ino`
+
+Los sketches históricos dependen de pines/APIs de ESP32-S3 y se conservan solo como referencia; **no representan el despliegue real UNO R4 WiFi**.

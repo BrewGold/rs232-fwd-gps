@@ -1,208 +1,177 @@
 # Especificación funcional v1.0
 
-## Sistema GNSS para Dynatest FWD con RTK3B Budget
+## Sistema GNSS para Dynatest FWD con Arduino UNO R4 WiFi
 
 ## Objetivo
 
 Proporcionar al Dynatest FWD una posición GNSS mejorada mediante:
 
-- RTK cuando exista conectividad NTRIP.
-- Galileo HAS cuando esté disponible.
+- RTK cuando exista conectividad externa adecuada.
+- Galileo HAS cuando esté disponible en el UM980.
 - SBAS/EGNOS como respaldo.
 - Promedio temporal de coordenadas durante la parada.
 - Presentación del estado GNSS mediante LEDs externos.
+- Corrección geométrica antena→pistón con yaw del BNO085 cuando haya yaw válido.
 
-No se implementará corrección por rumbo basada en trayectoria.
-
-## Arquitectura Hardware
+## Arquitectura hardware real
 
 ### Receptor GNSS
 
 - ArduSimple simpleRTK3B Budget
 - UM980
-
-Características:
-
-- COM1 → UPrecise
-- COM3 → Comunicación principal con ESP32-S3
+- Salida de trabajo hacia el firmware: GGA + RMC + `#PPPNAVA`
 
 ### Controlador
 
-- ESP32-S3 formato UNO
+- **Arduino UNO R4 WiFi**
+- MCU principal: **Renesas RA4M1**
+- El ESP32-S3 integrado no se usa como MCU de esta aplicación.
 
 Funciones:
 
-- Cliente NTRIP
-- Recepción GNSS
+- Recepción GNSS por `Serial1`
 - Detección de parada
 - Promedio de coordenadas
-- Generación GGA
-- Control LEDs
+- Generación `$GCGGA`
+- Control de LEDs
+- Lectura de yaw BNO085
 
-### Sensor de orientación (experimental)
+### Sensor de orientación
 
 - Adafruit BNO085/BNO086
-- Interfaz I²C
-- Uso previsto: obtención de rumbo absoluto
-
-Estado actual:
-
-- Experimental
-- No se utilizará inicialmente para corregir coordenadas
+- Interfaz **I²C `Wire`**
+- Velocidad de bus: **100 kHz**
+- Uso: yaw absoluto para aplicar offset antena→pistón
 
 ### Comunicación Dynatest
 
-- Conversión RS232 con MAX3232
-
-Conexión:
-
-- ESP32-S3 UART2
-- MAX3232
-- Dynatest
+- Canal base implementado: **USB CDC (`Serial`)**
+- Salida: **`$GCGGA` a 10 Hz**
+- Limitación: el mismo `Serial` no debe compartirse con logs si se usa como enlace NMEA limpio.
 
 ## Comunicaciones
 
 ### UART RTK3B
 
-- Puerto: ESP32-S3 UART1
-- Velocidad: 115200 baud
-- Mensajes recibidos: GGA, RMC
-- Mensajes transmitidos: RTCM
+- Puerto: **`Serial1`**
+- Pines: **D0/D1** del UNO R4 WiFi
+- Velocidad: **115200 baud**
+- Mensajes aceptados: `$GPGGA`, `$GNGGA`, `$GCGGA`, `$GPRMC`, `$GNRMC`, `#PPPNAVA`
 
-### UART Dynatest
+### Salida Dynatest
 
-- Puerto: ESP32-S3 UART2
-- Velocidad: 38400 baud
-- Salida: GGA a 10 Hz
+- Puerto implementado: **`Serial` / USB CDC**
+- Velocidad práctica en host: configurar según el convertidor/monitor usado; la capa USB CDC no crea una segunda UART física en la placa.
+- Formato: **`$GCGGA`**
+- Tasa: **10 Hz**
+- Terminación: **CRLF**
 
 ### I²C IMU
 
-- ESP32-S3 ↔ BNO085
-- Velocidad: 100 kHz
+- Puerto: **`Wire`**
+- Velocidad: **100 kHz**
+- Pines: **SDA/SCL** del UNO R4 WiFi
 
 ## Posicionamiento
 
 ### Prioridad de soluciones
 
-1. RTK FIX
-2. Galileo HAS
-3. SBAS (EGNOS)
-4. GPS autónomo
+1. Posición `LOCKED` válida (parado con promedio finalizado)
+2. PPP estable
+3. PPP convergiendo
+4. GNSS autónomo válido
 
 ### Detección de parada
 
-Condición preliminar (cualquiera):
+Condiciones:
 
-- Velocidad < 0,2 km/h durante 2 s
-- o desplazamiento < 10 cm durante 2 s
+- velocidad `< 0.20 m/s` durante al menos `2 s` para entrar en `AVERAGING`;
+- velocidad `> 0.30 m/s` para salir a `MOVING`;
+- en `LOCKED`, salir a `MOVING` si la distancia supera `1 m` comparando coordenadas **raw con raw**.
 
 ### Promedio GNSS
 
 Al detectar parada:
 
-- Ventana: 15 segundos
-- Muestras: 10 Hz × 15 s = 150 observaciones
-
-Resultado:
-
-- Latitud media
-- Longitud media
-- Altitud media
+- ventana: `15 s`
+- periodo de muestreo: `10 Hz`
+- medias calculadas: latitud, longitud, altitud y yaw circular si está disponible
 
 ### Coordenada enviada
 
-Inicialmente:
+- en `MOVING`: posición instantánea con offset si hay yaw válido;
+- en `LOCKED`: posición promediada con offset si hay yaw válido;
+- si no hay yaw, se emite la coordenada GNSS sin corregir.
 
-- Posición media de la antena GNSS
+## NMEA
 
-No se aplicará:
+### Entrada
 
-- Corrección por trayectoria previa
+- Validación obligatoria del checksum XOR en GGA y RMC.
+- El HDOP de salida debe propagarse desde el campo 8 de la GGA recibida.
+- Si el HDOP de entrada falta o es inválido, se usa un fallback documentado de `1.0`.
+
+### Salida
+
+- Sentencia generada: **`$GCGGA`**
+- Checksum: XOR NMEA
+- Terminación: `\r\n`
+- Timeout de frescura: si la última GGA supera el umbral configurado, la salida se silencia.
+
+## PPP / HAS
+
+- Solo se procesan mensajes que **empiezan por `#PPPNAVA`**.
+- No se clasifican mensajes arbitrarios por contener la cadena `HAS`.
 
 ## Indicadores externos
 
-Ubicación:
+### LED1
 
-- Integrados en el módulo remoto asociado al BNO085
+- OFF → sin GGA fresca
+- Parpadeo → PPP convergiendo
+- ON fijo → GNSS válido / PPP estable
 
-### LED 1 — POWER
+### LED2
 
-- Apagado → Sin alimentación
-- Encendido → Sistema operativo
+- OFF → `MOVING`
+- Parpadeo → `AVERAGING`
+- ON fijo → `LOCKED`
 
-### LED 2 — GNSS
+## Arnés remoto BNO085/LED
 
-- Apagado → Sin solución
-- Parpadeo lento → GPS autónomo
-- 2 destellos → SBAS
-- 3 destellos → Galileo HAS
-- Encendido fijo → RTK FIX
+Etiqueta obligatoria:
 
-## Cableado IMU
+- **`BNO085/LED — NO ETHERNET`**
 
-Conector:
+Asignación RJ45:
 
-- RJ45 (CAT5e/CAT6)
+1. `+5V` solo a `VIN/5V` del breakout Adafruit
+2. `GND`
+3. `SDA`
+4. `LED1`
+5. `LED2`
+6. `GND`
+7. `SCL`
+8. `GND`
 
-Asignación:
+Restricciones de instalación:
 
-- Pin 1: SDA
-- Pin 2: GND
-- Pin 3: SCL
-- Pin 4: +3V3
-- Pin 5: +3V3
-- Pin 6: GND
-- Pin 7: LED_POWER
-- Pin 8: LED_GNSS
+- cable UTP directo pin‑a‑pin;
+- nunca conectar a Ethernet ni PoE;
+- mantener separación respecto al cableado de bomba/motor;
+- cruces a ~90° cuando sean inevitables;
+- desacoplo local de `100 nF + 10–100 µF`;
+- comprobar continuidad antes de energizar.
 
-## Software
+## Aceptación Rev.1 UNO R4 WiFi
 
-### Estado MOVING
-
-- Leer GGA
-- Leer RMC
-- Actualizar historial
-
-### Estado STOPPED
-
-- Promedio 15 s
-
-### Estado OUTPUT
-
-- Mantener salida GGA a 10 Hz al Dynatest
-
-## Fases del proyecto
-
-### Fase 1
-
-RTK3B → ESP32-S3 → Dynatest
-
-Validar:
-
-- 38400 baud
-- GGA 10 Hz
-- Compatibilidad Dynatest
-
-### Fase 2
-
-Implementar:
-
-- NTRIP
-- RTCM
-- RTK FIX
-
-### Fase 3
-
-Implementar:
-
-- Promedio de 15 s
-
-### Fase 4
-
-Instalar:
-
-- BNO085
-- LEDs
-- RJ45
-
-Para evaluación de corrección geométrica futura.
+- `$GCGGA` a 10 Hz en movimiento
+- `$GCGGA` a 10 Hz en parada
+- HDOP variable propagado
+- checksum y CRLF correctos
+- silencio por timeout de frescura
+- BNO085 por `Wire` a 100 kHz
+- `Serial1` en D0/D1
+- LEDs en pines válidos UNO R4
+- RJ45 seguro y etiquetado `NO ETHERNET`
+- prueba con bomba apagada y encendida
