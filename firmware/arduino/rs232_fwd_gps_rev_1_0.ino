@@ -89,6 +89,7 @@ int sampleCount = 0;
 int yawSampleCount = 0;
 
 bool lockedValid = false;
+bool lockedOffsetApplied = false;
 double lockedLat = 0.0;
 double lockedLon = 0.0;
 double lockedAlt = 0.0;
@@ -573,6 +574,7 @@ void updateMovementState() {
 
         movementState = AVERAGING;
         lockedValid = false;
+        lockedOffsetApplied = false;
         Serial.println("[STATE] MOVING -> AVERAGING");
       }
       break;
@@ -597,6 +599,7 @@ void updateMovementState() {
       if (speedValid && currentSpeedMS > SPEED_EXIT_STOP) {
         movementState = MOVING;
         lockedValid = false;
+        lockedOffsetApplied = false;
         lastStopCheckMs = 0;
         sampleCount = 0;
         Serial.println("[STATE] AVERAGING -> MOVING (velocidad aumentó)");
@@ -612,6 +615,7 @@ void updateMovementState() {
         if (isnan(lockedLat) || isnan(lockedLon)) {
           movementState = MOVING;
           lockedValid = false;
+          lockedOffsetApplied = false;
           sampleCount = 0;
           Serial.println("[STATE] AVERAGING failed - invalid trimmed means");
           break;
@@ -619,8 +623,10 @@ void updateMovementState() {
 
         if (!isnan(lockedYaw)) {
           applyAntennaOffset(lockedLat, lockedLon, lockedYaw, &lockedLat, &lockedLon);
+          lockedOffsetApplied = true;
           Serial.printf("[LOCKED] offset aplicado, bearing=%.1f°\n", normalizeAngle(lockedYaw + 270.0));
         } else {
+          lockedOffsetApplied = false;
           Serial.println("[LOCKED] yaw NAN - offset NO aplicado (posición GNSS pura)");
         }
 
@@ -639,6 +645,7 @@ void updateMovementState() {
       if (speedValid && currentSpeedMS > SPEED_EXIT_STOP) {
         movementState = MOVING;
         lockedValid = false;
+        lockedOffsetApplied = false;
         lastStopCheckMs = 0;
         sampleCount = 0;
         Serial.println("[STATE] LOCKED -> MOVING (velocidad alta)");
@@ -650,22 +657,24 @@ void updateMovementState() {
         double currentCompareLon = currentLon;
         double lockedCompareLat = lockedReferenceLat;
         double lockedCompareLon = lockedReferenceLon;
-        double compareYaw = NAN;
+        if (lockedOffsetApplied) {
+          double compareYaw = lockedYaw;
+          if (!isnan(currentYaw)) {
+            compareYaw = currentYaw;
+          }
 
-        if (!isnan(lockedYaw)) {
-          compareYaw = !isnan(currentYaw) ? currentYaw : lockedYaw;
-        }
-
-        if (!isnan(compareYaw) && !isnan(lockedYaw)) {
-          applyAntennaOffset(currentLat, currentLon, compareYaw, &currentCompareLat, &currentCompareLon);
-          lockedCompareLat = lockedLat;
-          lockedCompareLon = lockedLon;
+          if (!isnan(compareYaw)) {
+            applyAntennaOffset(currentLat, currentLon, compareYaw, &currentCompareLat, &currentCompareLon);
+            lockedCompareLat = lockedLat;
+            lockedCompareLon = lockedLon;
+          }
         }
 
         double dist = haversine(currentCompareLat, currentCompareLon, lockedCompareLat, lockedCompareLon);
         if (dist > NEW_LOCATION_DIST) {
           movementState = MOVING;
           lockedValid = false;
+          lockedOffsetApplied = false;
           lastStopCheckMs = 0;
           sampleCount = 0;
           Serial.printf("[STATE] LOCKED -> MOVING (dist %.2fm)\n", dist);

@@ -172,14 +172,15 @@ Guía práctica:
 - Actualizar historial
 - Mantener salida `$GCGGA` si GNSS es válido y fresco
 
-### Estado STOPPED
+### Estado AVERAGING
 
 - Promedio 15 s
 - Mantener salida `$GCGGA` mientras exista GNSS válido y fresco
 
-### Estado OUTPUT
+### Estado LOCKED
 
 - Mantener salida `$GCGGA` a 10 Hz al Dynatest
+- Mantener la coordenada promediada/corregida mientras siga siendo válida
 - Silenciar la salida tras timeout de frescura GGA
 
 ## Fases del proyecto
