@@ -66,7 +66,7 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 ### AVERAGING
 
-- Se detecta parada por umbral de velocidad o desplazamiento.
+- Se detecta parada por umbral de velocidad sostenido durante ~2 s.
 - Se activa ventana de muestreo de 15 s.
 - Se calculan medias de latitud, longitud y altitud.
 - El LED2 (`GPIO5`) parpadea mientras la ventana sigue abierta.

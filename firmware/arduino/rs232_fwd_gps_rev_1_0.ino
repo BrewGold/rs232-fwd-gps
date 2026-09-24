@@ -200,11 +200,11 @@ void applyAntennaOffset(double baseLat, double baseLon, double yawDeg, double* c
   double offsetRad = OFFSET_M / EARTH_RADIUS;
   double bearingRad = toRadians(correctionBearing);
 
-  double latOffset = offsetRad * cos(bearingRad);
-  double lonOffset = offsetRad * sin(bearingRad) / cos(toRadians(baseLat));
+  double latOffsetRad = offsetRad * cos(bearingRad);
+  double lonOffsetRad = offsetRad * sin(bearingRad) / cos(toRadians(baseLat));
 
-  *correctedLat += latOffset;
-  *correctedLon += lonOffset;
+  *correctedLat += toDegrees(latOffsetRad);
+  *correctedLon += toDegrees(lonOffsetRad);
 }
 
 double haversine(double lat1, double lon1, double lat2, double lon2) {
@@ -580,7 +580,7 @@ void updateMovementState() {
       break;
 
     case AVERAGING:
-      if (lastGgaMs != lastSampledGgaMs && sampleCount < MAX_SAMPLES) {
+      if (ggaValid && lastGgaMs != lastSampledGgaMs && sampleCount < MAX_SAMPLES) {
         latBuffer[sampleCount] = currentLat;
         lonBuffer[sampleCount] = currentLon;
         altBuffer[sampleCount] = currentAlt;

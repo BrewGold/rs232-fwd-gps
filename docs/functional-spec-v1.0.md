@@ -92,10 +92,10 @@ Conexión:
 
 ### Detección de parada
 
-Condición preliminar (cualquiera):
+Condición implementada en Rev.1:
 
-- Velocidad < 0,2 km/h durante 2 s
-- o desplazamiento < 10 cm durante 2 s
+- Velocidad < 0,20 m/s durante 2 s para entrar en `AVERAGING`
+- Salida de `LOCKED` por velocidad > 0,30 m/s o por cambio posicional suficiente frente a la referencia bloqueada
 
 ### Promedio GNSS
 
