@@ -658,13 +658,8 @@ void updateMovementState() {
         double lockedCompareLat = lockedReferenceLat;
         double lockedCompareLon = lockedReferenceLon;
         if (lockedOffsetApplied) {
-          double compareYaw = lockedYaw;
-          if (!isnan(currentYaw)) {
-            compareYaw = currentYaw;
-          }
-
-          if (!isnan(compareYaw)) {
-            applyAntennaOffset(currentLat, currentLon, compareYaw, &currentCompareLat, &currentCompareLon);
+          if (!isnan(lockedYaw)) {
+            applyAntennaOffset(currentLat, currentLon, lockedYaw, &currentCompareLat, &currentCompareLon);
             lockedCompareLat = lockedLat;
             lockedCompareLon = lockedLon;
           }
