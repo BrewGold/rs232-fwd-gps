@@ -88,7 +88,7 @@ El `fixQ` de salida se calcula según prioridad:
 1. Lee líneas NMEA/propietarias del UM980 por `Serial1` (`$GPGGA` / `$GNGGA` / `$GCGGA`, `$GPRMC` / `$GNRMC` / `$GCRMC`, `#PPPNAVA`).
 2. Valida checksum y parsea GGA (posición, altitud, satélites, fix) y RMC (velocidad, rumbo).
 3. Actualiza estado PPP/HAS (`SIN_PPP` / `PPP_CONVERGING` / `PPP_ESTABLE`).
-4. Lee yaw del IMU BNO085 (rotation vector) vía `Wire1`, con reintentos e detección de reset.
+4. Lee yaw del IMU BNO085 (rotation vector) vía `Wire1`, con reintentos y detección de reset.
 5. Actualiza la máquina de estados de movimiento (`MOVING` / `AVERAGING` / `LOCKED`).
 6. En `AVERAGING`, acumula muestras de lat/lon/alt/yaw; al completar 15 s calcula medias recortadas (trimmed mean) y media circular del yaw, y aplica el offset antena→pistón.
 7. En `LOCKED`, transmite la posición corregida; en otro caso transmite la posición instantánea (con offset si hay yaw disponible).

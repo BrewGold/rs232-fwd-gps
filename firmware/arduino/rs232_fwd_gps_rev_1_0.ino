@@ -94,8 +94,6 @@ double lockedLon = 0.0;
 double lockedAlt = 0.0;
 double lockedYaw = NAN;
 
-double lastLockedLat = 0.0;
-double lastLockedLon = 0.0;
 double lockedReferenceLat = 0.0;
 double lockedReferenceLon = 0.0;
 
@@ -187,6 +185,25 @@ bool parseLongitude(const char* lonStr, const char* lonHem, double* lon) {
 
 bool startsWithSentence(const char* line, const char* sentenceId) {
   return line && sentenceId && strncmp(line, sentenceId, strlen(sentenceId)) == 0;
+}
+
+void applyAntennaOffset(double baseLat, double baseLon, double yawDeg, double* correctedLat, double* correctedLon) {
+  if (!correctedLat || !correctedLon) return;
+
+  *correctedLat = baseLat;
+  *correctedLon = baseLon;
+
+  if (isnan(yawDeg)) return;
+
+  double correctionBearing = normalizeAngle(yawDeg + 270.0);
+  double offsetRad = OFFSET_M / EARTH_RADIUS;
+  double bearingRad = toRadians(correctionBearing);
+
+  double latOffset = offsetRad * cos(bearingRad);
+  double lonOffset = offsetRad * sin(bearingRad) / cos(toRadians(baseLat));
+
+  *correctedLat += latOffset;
+  *correctedLon += lonOffset;
 }
 
 double haversine(double lat1, double lon1, double lat2, double lon2) {
@@ -532,7 +549,6 @@ void updateMovementState() {
   uint32_t nowMs = millis();
 
   bool speedValid = (nowMs - lastSpeedUpdateMs) <= SPEED_FRESHNESS_MS;
-  if (!speedValid) currentSpeedMS = 0.0;
 
   bool ggaValid = (nowMs - lastGgaMs) <= GGA_FRESHNESS_MS;
   if (!ggaValid) gnssValid = false;
@@ -602,26 +618,14 @@ void updateMovementState() {
         }
 
         if (!isnan(lockedYaw)) {
-          double correctionBearing = normalizeAngle(lockedYaw + 270.0);
-          double offsetRad = OFFSET_M / EARTH_RADIUS;
-          double bearingRad = toRadians(correctionBearing);
-
-          double latOffset = offsetRad * cos(bearingRad);
-          double lonOffset = offsetRad * sin(bearingRad) / cos(toRadians(lockedLat));
-
-          lockedLat += latOffset;
-          lockedLon += lonOffset;
-
-          Serial.printf("[LOCKED] offset aplicado, bearing=%.1f°\n", correctionBearing);
+          applyAntennaOffset(lockedLat, lockedLon, lockedYaw, &lockedLat, &lockedLon);
+          Serial.printf("[LOCKED] offset aplicado, bearing=%.1f°\n", normalizeAngle(lockedYaw + 270.0));
         } else {
           Serial.println("[LOCKED] yaw NAN - offset NO aplicado (posición GNSS pura)");
         }
 
         lockedReferenceLat = trimmed_mean(latBuffer, sampleCount);
         lockedReferenceLon = trimmed_mean(lonBuffer, sampleCount);
-        lastLockedLat = lockedLat;
-        lastLockedLon = lockedLon;
-
         movementState = LOCKED;
         lockedValid = true;
         lastStopCheckMs = 0;
@@ -642,7 +646,20 @@ void updateMovementState() {
       }
 
       if (gnssValid) {
-        double dist = haversine(currentLat, currentLon, lockedReferenceLat, lockedReferenceLon);
+        double currentCompareLat = currentLat;
+        double currentCompareLon = currentLon;
+        double lockedCompareLat = lockedReferenceLat;
+        double lockedCompareLon = lockedReferenceLon;
+
+        if (!isnan(currentYaw)) {
+          applyAntennaOffset(currentLat, currentLon, currentYaw, &currentCompareLat, &currentCompareLon);
+          if (!isnan(lockedYaw)) {
+            lockedCompareLat = lockedLat;
+            lockedCompareLon = lockedLon;
+          }
+        }
+
+        double dist = haversine(currentCompareLat, currentCompareLon, lockedCompareLat, lockedCompareLon);
         if (dist > NEW_LOCATION_DIST) {
           movementState = MOVING;
           lockedValid = false;
@@ -681,18 +698,10 @@ void transmitDynatestOutput() {
     outYaw = currentYaw;
 
     if (!isnan(outYaw)) {
-      double correctionBearing = normalizeAngle(outYaw + 270.0);
-      double offsetRad = OFFSET_M / EARTH_RADIUS;
-      double bearingRad = toRadians(correctionBearing);
-
-      double latOffset = offsetRad * cos(bearingRad);
-      double lonOffset = offsetRad * sin(bearingRad) / cos(toRadians(outLat));
-
-      outLat += latOffset;
-      outLon += lonOffset;
+      applyAntennaOffset(outLat, outLon, outYaw, &outLat, &outLon);
 
       Serial.printf("[TX-INST] fixQ=%d pos=%.6f,%.6f yaw=%.1f bearing=%.1f\n",
-                    fixQ, outLat, outLon, outYaw, correctionBearing);
+                    fixQ, outLat, outLon, outYaw, normalizeAngle(outYaw + 270.0));
     } else {
       Serial.printf("[TX-INST] fixQ=%d pos=%.6f,%.6f yaw=NAN (sin offset)\n",
                     fixQ, outLat, outLon);
