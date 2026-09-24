@@ -9,7 +9,7 @@ Bloques principales:
 1. Receptor GNSS (UM980 / simpleRTK3B Budget)
 2. Controlador ESP32-S3
 3. Interfaz RS232 (MAX3232)
-4. IMU BNO085/BNO086 (experimental)
+4. IMU BNO085/BNO086
 5. LEDs externos de estado
 
 ## 2. Diagrama lógico
@@ -22,11 +22,11 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
         │                                    │
         │                                    └─ NMEA (GGA/RMC) ──► ESP32-S3 UART1
         │
-        ├─ I2C ──► BNO085 (experimental)
+        ├─ I2C ──► BNO085 (yaw para offset antena→pistón)
         │
-        ├─ GPIO ──► LED_POWER / LED_GNSS
+        ├─ GPIO ──► LED1(GPIO4) / LED2(GPIO5)
         │
-        └─ UART2 (38400) ─► MAX3232 ─► Dynatest FWD (GGA 10 Hz)
+        └─ UART2 (38400) ─► MAX3232 ─► Dynatest FWD (`$GCGGA` 10 Hz)
 ```
 
 ## 3. Interfaz de datos
@@ -45,14 +45,16 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 - Enlace: UART2 + MAX3232
 - Baudrate: 38400
-- Trama: NMEA GGA
+- Trama: NMEA `$GCGGA`
 - Tasa: 10 Hz
+- Condición: solo con GGA válida y fresca
 
 ### 3.3 ESP32-S3 ↔ BNO085
 
 - Enlace: I²C (100 kHz)
-- Uso actual: telemetría experimental de rumbo
-- Impacto en coordenada: ninguno en v1.0
+- Pines: SDA=8, SCL=9, dirección `0x4B`
+- Uso actual: yaw para aplicar el offset antena→pistón
+- Fallback: si no hay yaw válido, la salida usa GNSS puro
 
 ## 4. Máquina de estados
 
@@ -60,32 +62,29 @@ ESP32-S3 (cliente NTRIP) ───── RTCM ─────► UM980 (RTK3B)
 
 - Se ingiere GNSS continuo.
 - Se actualiza historial para detección de parada.
-- Se mantiene salida GGA 10 Hz.
+- Se mantiene salida `$GCGGA` 10 Hz mientras la GGA siga válida y fresca.
 
-### STOPPED
+### AVERAGING
 
-- Se detecta parada por umbral de velocidad o desplazamiento.
+- Se detecta parada por umbral de velocidad sostenido durante ~2 s.
 - Se activa ventana de muestreo de 15 s.
 - Se calculan medias de latitud, longitud y altitud.
+- El LED2 (`GPIO5`) parpadea mientras la ventana sigue abierta.
 
-### OUTPUT
+### LOCKED
 
-- Se publica GGA a 10 Hz usando la mejor coordenada disponible.
-- Mientras persista parada se puede mantener la coordenada promediada.
-- Al reanudar movimiento, volver a solución instantánea.
+- Se publica a 10 Hz la coordenada fija promediada/corregida obtenida al cerrar `AVERAGING`.
+- Mientras persista parada se mantiene esa coordenada bloqueada.
+- Si reaparece movimiento o cambio posicional suficiente, volver a `MOVING`.
+- Si la GGA expira, la salida se silencia.
 
 ## 5. Selección de calidad GNSS
 
-Orden de prioridad:
+Regla en Rev.1:
 
-1. RTK FIX
-2. Galileo HAS
-3. SBAS (EGNOS)
-4. Autónomo
-
-Regla:
-
-- Siempre emitir en GGA la mejor solución válida disponible según prioridad.
+- El firmware conserva el `fixQ` válido recibido en la GGA de entrada.
+- El estado `LOCKED` no promociona artificialmente la calidad GNSS.
+- El sistema sigue mostrando el estado PPP/HAS por LED y logs, pero la sentencia de salida mantiene el `fixQ` del receptor.
 
 ## 6. Detección de parada
 
@@ -101,29 +100,38 @@ Notas de implementación:
 
 ## 7. LEDs de estado
 
-### LED_POWER
+### LED1 (GPIO4 / LED_RED)
 
-- OFF: sin alimentación
-- ON fijo: sistema activo
+- OFF: sin fix GNSS válido
+- Parpadeo: PPP convergiendo
+- ON fijo: GNSS válido / PPP estable
 
-### LED_GNSS
+### LED2 (GPIO5 / LED_GREEN)
 
-- OFF: sin solución
-- Parpadeo lento: autónomo
-- 2 destellos periódicos: SBAS
-- 3 destellos periódicos: Galileo HAS
-- ON fijo: RTK FIX
+- OFF: MOVING
+- Parpadeo lento: AVERAGING
+- ON fijo: LOCKED válido
 
 ## 8. Cableado RJ45 (módulo remoto)
 
-- Pin 1: SDA
+**Custom BNO085/LED — NO ETHERNET** (no conectar a PoE/equipos Ethernet).
+
+- Pin 1: +5 V (solo a `VIN/5V` del breakout Adafruit BNO085)
 - Pin 2: GND
-- Pin 3: SCL
-- Pin 4: +3V3
-- Pin 5: +3V3
+- Pin 3: SDA
+- Pin 4: LED1 (GPIO4 / LED_RED)
+- Pin 5: LED2 (GPIO5 / LED_GREEN)
 - Pin 6: GND
-- Pin 7: LED_POWER
-- Pin 8: LED_GNSS
+- Pin 7: SCL
+- Pin 8: GND
+
+Notas de instalación:
+
+- Usar pares trenzados donde sea práctico.
+- Mantener el arnés lejos del cableado de motor/solenoides/potencia.
+- Cruzar señal y potencia a ~90° cuando sea necesario.
+- Añadir desacoplo local en el breakout (100 nF + 10–100 µF).
+- Verificar continuidad pin a pin antes de energizar.
 
 ## 9. Fases y criterio de aceptación
 
@@ -135,7 +143,7 @@ Objetivo:
 
 Aceptación:
 
-- GGA estable a 10 Hz, 38400 baud.
+- `$GCGGA` estable a 10 Hz, 38400 baud.
 - Dynatest recibe y parsea sin errores.
 
 ### Fase 2
@@ -147,7 +155,7 @@ Objetivo:
 Aceptación:
 
 - Entrada RTCM efectiva al UM980.
-- Transiciones de calidad reflejadas en LED_GNSS.
+- Transiciones de calidad reflejadas en LED1 (GPIO4).
 
 ### Fase 3
 
@@ -170,3 +178,4 @@ Aceptación:
 
 - Telemetría IMU operativa.
 - LEDs operativos en gabinete remoto.
+- BNO085 estable a 100 kHz con bomba OFF y ON.
