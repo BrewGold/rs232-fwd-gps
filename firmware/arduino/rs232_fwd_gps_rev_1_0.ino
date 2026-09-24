@@ -651,12 +651,10 @@ void updateMovementState() {
         double lockedCompareLat = lockedReferenceLat;
         double lockedCompareLon = lockedReferenceLon;
 
-        if (!isnan(currentYaw)) {
+        if (!isnan(currentYaw) && !isnan(lockedYaw)) {
           applyAntennaOffset(currentLat, currentLon, currentYaw, &currentCompareLat, &currentCompareLon);
-          if (!isnan(lockedYaw)) {
-            lockedCompareLat = lockedLat;
-            lockedCompareLon = lockedLon;
-          }
+          lockedCompareLat = lockedLat;
+          lockedCompareLon = lockedLon;
         }
 
         double dist = haversine(currentCompareLat, currentCompareLon, lockedCompareLat, lockedCompareLon);

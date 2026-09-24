@@ -48,7 +48,7 @@ Funciones:
 Estado actual:
 
 - Integrado en Rev.1 con fallback a GNSS puro si no hay yaw válido
-- Mantiene el comportamiento de la v0.99 de campo
+- Conserva la arquitectura base de la v0.99 de campo, pero en Rev.1 sí aplica el offset con yaw cuando el IMU está disponible
 
 ### Comunicación Dynatest
 
